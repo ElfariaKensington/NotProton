@@ -143,13 +143,13 @@ for (const form of Object.keys(FORMS)) {
        'a page naming its runtime and barrel o and t renders the same panel');
   const migration = panel(emit, form, undefined, {}, savedEnv, savedEnv);
   const migrationCheck = runner(form);
-  const legacyOptions = 'D3DMETAL_FRAMEWORK_PATH=/old FSR4_PROFILE=old ' +
-    'NOTPROTON_FORWARD_ENV=D3DMETAL_FRAMEWORK_PATH,FSR4_PROFILE %command% --example';
+  const legacyOptions = 'TEST_FRAMEWORK_PATH=/old TEST_PROFILE=old ' +
+    'NOTPROTON_FORWARD_ENV=TEST_FRAMEWORK_PATH,TEST_PROFILE %command% --example';
   migration.render({ details: details(legacyOptions) });
   await Promise.resolve();
   migrationCheck.ok(migration.written.length === 1 &&
-    !migration.written[0].opts.includes('D3DMETAL_FRAMEWORK_PATH=') &&
-    !migration.written[0].opts.includes('FSR4_PROFILE=') &&
+    !migration.written[0].opts.includes('TEST_FRAMEWORK_PATH=') &&
+    !migration.written[0].opts.includes('TEST_PROFILE=') &&
     !migration.written[0].opts.includes('NOTPROTON_FORWARD_ENV=') &&
     migration.written[0].opts.includes('%command% --example') && migration.envWritten.length === 1,
     'legacy environment values migrate off launch options while preserving game arguments');
