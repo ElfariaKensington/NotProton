@@ -42,6 +42,14 @@ int np_compat_app_runs_tool(uint32_t appid) {
     return app_tool;
 }
 
+static const char *test_env_prefix;
+
+char *np_compatsvc_launch_env_prefix(uint32_t appid) {
+    if (appid != 2290 || !test_env_prefix)
+        return NULL;
+    return strdup(test_env_prefix);
+}
+
 void *Plat_Realloc(void *p, size_t size) {
     return realloc(p, size);
 }
@@ -210,6 +218,11 @@ int main(void) {
     keeps("", "", NULL);
 
     printf("== a native macOS game keeps the client's arguments ==\n");
+    printf("== saved env is prepended only to runtime arguments ==\n");
+    test_env_prefix = "TEST_ENV='two words' ";
+    keeps("--windowed", "TEST_ENV='two words' --windowed", NULL);
+    test_env_prefix = NULL;
+
     app_tool = 0;
     keeps("--cwd client_pc\\root\\bin\\pc", "--cwd client_pc\\root\\bin\\pc", NULL);
     app_tool = 1;
