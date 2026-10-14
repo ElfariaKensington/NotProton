@@ -7,6 +7,7 @@
 #include <stdbool.h>
 #include <mach-o/loader.h>
 #include <limits.h>
+#include <pthread.h>
 
 // Stubs for the compat layer, set by each test before calling a handler. The check owns
 // both sides, so what the handler includes and labels is under test, not the compat answers.
@@ -786,12 +787,29 @@ static void string_field_cases(void) {
     check(result != NULL && result[0] == '\0', "a null string field returns empty");
 }
 
+static void *notify_state_changed_on_other_thread(void *unused) {
+    (void)unused;
+    np_compatsvc_state_changed();
+    return NULL;
+}
+
 static void notification_suppression_cases(void) {
     g_state_changed = 1;
     int before = notify_calls;
     np_compatsvc_suppress_state_changed(1);
     np_compatsvc_state_changed();
     check(notify_calls == before, "selection reply suppresses re-entrant WebUI notification");
+
+    pthread_t thread;
+    int create_rc = pthread_create(&thread, NULL, notify_state_changed_on_other_thread, NULL);
+    check(create_rc == 0, "the cross-thread suppression test starts its worker");
+    if (create_rc == 0) {
+        int join_rc = pthread_join(thread, NULL);
+        check(join_rc == 0, "the cross-thread suppression worker completes");
+        check(notify_calls == before,
+              "selection suppression blocks a notification arriving on another Steam thread");
+    }
+
     np_compatsvc_suppress_state_changed(0);
     np_compatsvc_state_changed();
     check(notify_calls == before + 1, "WebUI state notifications resume after selection");
