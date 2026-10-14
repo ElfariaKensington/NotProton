@@ -274,7 +274,6 @@ static int out_expand(np_out_t *o, const char *replace, const np_cap_t *caps) {
     "]})}):null;" \
     "if(t.unAppID&&((!cleaned&&(applied!==\"\"||L.g(\"NOTPROTON_FORWARD_ENV\")!==\"\"))||env!==applied))Promise.resolve().then(()=>applyEnv(env));" \
     "else if(t.unAppID&&!cleaned)saveClean();" \
-    "return panel" \
     "return panel})(t,L," RT ")"
 
 // FEX runs arm64 Wine, which has no D3DMetal and never runs under Rosetta.
@@ -334,7 +333,7 @@ static int out_expand(np_out_t *o, const char *replace, const np_cap_t *caps) {
     "(0," RT ".jsx)(" BARREL ".XY,{label:npL(\"Controllers (May break Steam Input. Not recommended)\"," \
     "\"控制器（可能导致 Steam Input 失效，不推荐）\"),children:" \
     "T([\"NOTPROTON_RAW_CONTROLLERS\"],npL(\"Let games read controllers directly\"," \
-    "\"允许游戏直接读取控制器\"),\"1\",\"\")},\"ctl\")" \, " \
+    "\"允许游戏直接读取控制器\"),\"1\",\"\")},\"ctl\")," \
     NP_CX_ENV_PANEL(RT) \
         "]})})}"
 
