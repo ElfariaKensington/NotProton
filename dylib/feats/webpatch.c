@@ -288,7 +288,7 @@ static int out_expand(np_out_t *o, const char *replace, const np_cap_t *caps) {
     "saveManaged=v=>{try{if(v)localStorage.setItem(envManagedKey,v);else localStorage.removeItem(envManagedKey)}catch(x){}}," \
     "env=loadLocal(),applied=loadApplied(),managed=loadManaged()," \
     "parse=x=>{const m=new Map();x.split(/\\r?\\n/).forEach(l=>{if(!l||/^\\s*#/.test(l))return;const i=l.indexOf(\"=\");if(i<1)return;const k=l.slice(0,i);if(/^[A-Za-z_]\\w*$/.test(k))m.set(k,[k,l.slice(i+1)])});return Array.from(m.values())}," \
-    "applyEnv=v=>{const next=parse(v),names=next.map(p=>p[0]),prior=managed.split(\",\").filter(k=>/^[A-Za-z_]\\w*$/.test(k)),current=L.g(\"NOTPROTON_FORWARD_ENV\").split(\",\").filter(k=>/^[A-Za-z_]\\w*$/.test(k)),preserved=current.filter(k=>prior.indexOf(k)<0),forwarded=Array.from(new Set(preserved.concat(names))),remove=Array.from(new Set(prior.concat(names,[\"NOTPROTON_FORWARD_ENV\"]))).map(k=>[k,\"\"]);" \
+    "applyEnv=v=>{const next=parse(v),names=next.map(p=>p[0]),prior=loadManaged().split(\",\").filter(k=>/^[A-Za-z_]\\w*$/.test(k)),current=L.g(\"NOTPROTON_FORWARD_ENV\").split(\",\").filter(k=>/^[A-Za-z_]\\w*$/.test(k)),preserved=current.filter(k=>prior.indexOf(k)<0),forwarded=Array.from(new Set(preserved.concat(names))),remove=Array.from(new Set(prior.concat(names,[\"NOTPROTON_FORWARD_ENV\"]))).map(k=>[k,\"\"]);" \
     "if(t.unAppID)L.s(remove.concat(next,[[\"NOTPROTON_FORWARD_ENV\",forwarded.join(\",\")]]));" \
     "saveLocal(v);saveApplied(v);saveManaged(names.join(\",\"))}," \
     "panel=t.unAppID?(0,React.jsx)(\"div\",{className:\"MSCXEnv\",children:(0,React.jsxs)(React.Fragment,{children:[" \
