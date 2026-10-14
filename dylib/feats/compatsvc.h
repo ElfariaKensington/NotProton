@@ -27,4 +27,8 @@ int np_compatsvc_routes(void);
 void np_compatsvc_state_changed(void);
 void np_compatsvc_suppress_state_changed(int suppress);
 
+// Handles per-game environment saves via native and beta Steam UI paths.
+// Returns 0 for an ordinary tool, 1 when saved, and -1 when saving failed.
+int np_compatsvc_handle_env_tool(uint32_t appid, const char *name);
+
 #endif // NOTPROTON_FEATS_COMPATSVC_H

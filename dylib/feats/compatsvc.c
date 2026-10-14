@@ -191,6 +191,20 @@ static int save_environment_file(uint32_t appid, const char *text) {
     return 0;
 }
 
+// Shared by the custom beta WebUI route and the native Steam compat-tool hook.
+int np_compatsvc_handle_env_tool(uint32_t appid, const char *name) {
+    if (!name || strncmp(name, NP_ENV_PREFIX, strlen(NP_ENV_PREFIX)) != 0)
+        return 0;
+
+    const char *text = name + strlen(NP_ENV_PREFIX);
+    if (save_environment_file(appid, text) != 0) {
+        NP_ERR("compatsvc: failed to save environment settings for app %u", appid);
+        return -1;
+    }
+    NP_LOG("compatsvc: saved environment settings for app %u", appid);
+    return 1;
+}
+
 // Protobuf writer.
 typedef struct {
     uint8_t *buf;
@@ -405,15 +419,9 @@ static int specify_compat_tool(uintptr_t request, uintptr_t response) {
     const char *tool  = string_field(request + SPECIFY_TOOL_NAME_OFF);
     (void)response;
 
-    if (strncmp(tool, NP_ENV_PREFIX, strlen(NP_ENV_PREFIX)) == 0) {
-        const char *text = tool + strlen(NP_ENV_PREFIX);
-        if (save_environment_file(appid, text) != 0) {
-            NP_ERR("compatsvc: failed to save environment settings for app %u", appid);
-            return RESULT_FAIL;
-        }
-        NP_LOG("compatsvc: saved environment settings for app %u", appid);
-        return RESULT_OK;
-    }
+    int env_result = np_compatsvc_handle_env_tool(appid, tool);
+    if (env_result != 0)
+        return env_result > 0 ? RESULT_OK : RESULT_FAIL;
 
     uint8_t *mgr = (uint8_t *)np_compat_manager();
     if (!mgr) {

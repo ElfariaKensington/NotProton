@@ -680,6 +680,24 @@ static void environment_file_cases(void) {
     check(rc == RESULT_OK, "clearing the environment sentinel is accepted");
     check(access(env_file, F_OK) != 0, "clearing removes the environment file");
 
+    check(np_compatsvc_handle_env_tool(42, "crossover") == 0,
+          "ordinary compatibility tool names pass through the native hook");
+    check(np_compatsvc_handle_env_tool(42, "notproton-env-v1:TEST_NATIVE_HOOK=1") == 1,
+          "the native compatibility hook accepts environment settings");
+    saved = fopen(env_file, "r");
+    check(saved != NULL, "the native hook writes the per-game environment file");
+    if (saved) {
+        char value[128] = {0};
+        size_t used = fread(value, 1, sizeof value - 1, saved);
+        fclose(saved);
+        value[used] = '\0';
+        check(strcmp(value, "TEST_NATIVE_HOOK=1") == 0,
+              "the native hook stores environment values outside Launch Options");
+    }
+    check(np_compatsvc_handle_env_tool(42, "notproton-env-v1:") == 1,
+          "the native hook removes settings when the editor is cleared");
+    check(access(env_file, F_OK) != 0, "the native hook clears the per-game environment file");
+
     unlink(vdf);
     char compatdata[PATH_MAX];
     snprintf(compatdata, sizeof compatdata, "%s/compatdata", steamapps);

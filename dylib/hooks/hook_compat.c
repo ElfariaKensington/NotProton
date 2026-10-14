@@ -101,6 +101,11 @@ static uint64_t hook_InternalSpecifyCompatTool(void *self, uint64_t appid,
                                                int priority) {
     fn_InternalSpecifyCompatTool orig =
         (fn_InternalSpecifyCompatTool)orig_InternalSpecifyCompatTool;
+
+    int env_result = np_compatsvc_handle_env_tool((uint32_t)appid, name);
+    if (env_result != 0)
+        return env_result > 0 ? 1 : 0;
+
     if (!orig) {
         NP_ERR("hook_InternalSpecifyCompatTool: no original, so appID %u keeps the "
                "mapping it had", (uint32_t)appid);

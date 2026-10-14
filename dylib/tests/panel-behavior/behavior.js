@@ -67,34 +67,18 @@ for (const form of Object.keys(FORMS)) {
   envEditor.props.onChange({ currentTarget: { value: savedEnv } });
   t.ok(written.length === 0 && envWritten.length === 0, 'typing only caches environment settings');
   envEditor.props.onBlur({ currentTarget: { value: savedEnv } });
-  if (form === 'component') {
-    t.ok(written.length === 1 && written[0].appid === 287700 &&
-         written[0].opts.includes('TEST_FRAMEWORK_PATH=/tmp/example/D3DMetal.framework') &&
-         written[0].opts.includes("TEST_ROOT='/tmp/test root'") &&
-         written[0].opts.includes('NOTPROTON_FORWARD_ENV=TEST_FRAMEWORK_PATH,TEST_HOOK_LOG,TEST_ROOT,TEST_REPLACE,TEST_PANEL,TEST_VERSION,TEST_PROFILE') &&
-         written[0].opts.includes('%command%') && !written[0].opts.includes('notproton-env-v1:') &&
-         envWritten.length === 0,
-         'legacy editor saves variables and launcher forwarding through SetAppLaunchOptions');
-  } else {
-    t.ok(written.length === 0 && envWritten.length === 1 && envWritten[0].appid === 287700 &&
-         envWritten[0].tool === 'notproton-env-v1:' + savedEnv,
-         'beta editor persists per-game settings through CompatManager');
-  }
+  await Promise.resolve(); await Promise.resolve();
+  t.ok(written.length === 0 && envWritten.length === 1 && envWritten[0].appid === 287700 &&
+       envWritten[0].tool === 'notproton-env-v1:' + savedEnv,
+       form + ' environment editor saves settings without touching Launch Options');
   t.ok(nodes('').find(x => x.type === 'textarea').props.defaultValue === savedEnv,
        'the editor restores the cached multiline environment value');
   written.length = 0; envWritten.length = 0;
   envEditor.props.onChange({ currentTarget: { value: '' } });
   envEditor.props.onBlur({ currentTarget: { value: '' } });
-  if (form === 'component') {
-    t.ok(written.length === 1 && !written[0].opts.includes('TEST_FRAMEWORK_PATH=') &&
-         !written[0].opts.includes('TEST_PROFILE=') &&
-         !written[0].opts.includes('NOTPROTON_FORWARD_ENV=') &&
-         written[0].opts.includes('%command%'),
-         'clearing the legacy editor removes its managed launch variables');
-  } else {
-    t.ok(envWritten.length === 1 && envWritten[0].tool === 'notproton-env-v1:',
-         'clearing the beta editor requests removal of saved settings');
-  }
+  await Promise.resolve(); await Promise.resolve();
+  t.ok(written.length === 0 && envWritten.length === 1 && envWritten[0].tool === 'notproton-env-v1:',
+       'clearing the editor removes saved settings without touching Launch Options');
 
   nodes('CX_GRAPHICS_BACKEND=dxmt').filter(x => x.type === 'Dropdown')[1].props.onChange({ data: '2.0' });
   t.ok(last().includes('metalSpatialUpscaleFactor=2.0'), 'the upscaler writes its factor');
@@ -146,13 +130,9 @@ for (const form of Object.keys(FORMS)) {
   const legacyOptions = 'TEST_FRAMEWORK_PATH=/old TEST_PROFILE=old ' +
     'NOTPROTON_FORWARD_ENV=TEST_FRAMEWORK_PATH,TEST_PROFILE %command% --example';
   migration.render({ details: details(legacyOptions) });
-  await Promise.resolve();
-  migrationCheck.ok(migration.written.length === 1 &&
-    !migration.written[0].opts.includes('TEST_FRAMEWORK_PATH=') &&
-    !migration.written[0].opts.includes('TEST_PROFILE=') &&
-    !migration.written[0].opts.includes('NOTPROTON_FORWARD_ENV=') &&
-    migration.written[0].opts.includes('%command% --example') && migration.envWritten.length === 1,
-    'legacy environment values migrate off launch options while preserving game arguments');
+  await Promise.resolve(); await Promise.resolve();
+  migrationCheck.ok(migration.written.length === 0 && migration.envWritten.length === 0,
+    'rendering the environment editor never rewrites Launch Options');
   failed += migrationCheck.failed;
 
   failed += t.failed;

@@ -256,49 +256,22 @@ static int out_expand(np_out_t *o, const char *replace, const np_cap_t *caps) {
 #define NP_CX_ENV_PANEL_ROUTE(RT) \
     "((t,L,React)=>{" \
     "const envKey=\"NotProton.Environment.\"+t.unAppID," \
-    "envAppliedKey=envKey+\".applied\",envCleanKey=envKey+\".launch-cleaned\"," \
+    "envAppliedKey=envKey+\".applied\"," \
     "loadApplied=()=>{try{return localStorage.getItem(envAppliedKey)||\"\"}catch(x){return\"\"}}," \
-    "saveApplied=v=>{try{if(v)localStorage.setItem(envAppliedKey,v);else localStorage.removeItem(envAppliedKey)}catch(x){}}," \
-    "loadClean=()=>{try{return localStorage.getItem(envCleanKey)===\"1\"}catch(x){return false}}," \
-    "saveClean=()=>{try{localStorage.setItem(envCleanKey,\"1\")}catch(x){}}," \
-    "loadLocal=()=>{try{return localStorage.getItem(envKey)||\"\"}catch(x){return\"\"}}," \
-    "saveLocal=v=>{try{if(v)localStorage.setItem(envKey,v);else localStorage.removeItem(envKey)}catch(x){}}," \
-    "env=loadLocal(),applied=loadApplied(),cleaned=loadClean()," \
-    "applyEnv=v=>{const parse=x=>x.split(/\\r?\\n/).filter(l=>l&&!/^\\s*#/.test(l)&&/^[A-Za-z_]\\w*=/.test(l)).map(l=>{const i=l.indexOf(\"=\");return[l.slice(0,i),l.slice(i+1)]}),prior=parse(applied),forwarded=L.g(\"NOTPROTON_FORWARD_ENV\").split(\",\").filter(k=>/^[A-Za-z_]\\w*$/.test(k)),remove=Array.from(new Set(prior.map(p=>p[0]).concat(forwarded))).map(k=>[k,\"\"]).concat([[\"NOTPROTON_FORWARD_ENV\",\"\"]]),hasLegacy=L.k.some(k=>remove.some(p=>k===p[0]));" \
-    "if(t.unAppID){if(hasLegacy)L.s(remove);SteamClient.Apps.SpecifyCompatTool(t.unAppID,\"notproton-env-v1:\"+v)}" \
-    "saveApplied(v);saveClean()}," \
+    "saveApplied=v=>{try{if(v)localStorage.setItem(envAppliedKey,v);else localStorage.removeItem(envAppliedKey)}catch(x){}}, \
+    "loadLocal=()=>{try{return localStorage.getItem(envKey)||\"\"}catch(x){return\"\"}}, \
+    "saveLocal=v=>{try{if(v)localStorage.setItem(envKey,v);else localStorage.removeItem(envKey)}catch(x){}}, \
+    "env=loadLocal(),applied=loadApplied(), \
+    "applyEnv=v=>{if(!t.unAppID)return;try{Promise.resolve(SteamClient.Apps.SpecifyCompatTool(t.unAppID,\"notproton-env-v1:\"+v)).then(()=>saveApplied(v)).catch(x=>console.error(\"NotProton: failed to save per-game environment\",x))}catch(x){console.error(\"NotProton: failed to save per-game environment\",x)}}," \
     "panel=t.unAppID?(0,React.jsx)(\"div\",{className:\"MSCXEnv\",children:(0,React.jsxs)(React.Fragment,{children:[" \
     "(0,React.jsx)(\"div\",{className:\"MSCXEnvLabel\",children:\"Environment Variables\"})," \
-    "(0,React.jsx)(\"div\",{className:\"MSCXEnvHelp\",children:\"One NAME=VALUE pair per line. Lines beginning with # are comments. Saved for this game by NotProton; launch options are left unchanged.\"})," \
+    "(0,React.jsx)(\"div\",{className:\"MSCXEnvHelp\",children:\"One NAME=VALUE pair per line. Lines beginning with # are comments. Saved per game and passed to the game through its launch environment; Launch Options are not modified.\"})," \
     "(0,React.jsx)(\"textarea\",{className:\"MSCXEnvText\",rows:7,spellCheck:false,defaultValue:env,onChange:v=>saveLocal(v.currentTarget.value),onBlur:v=>applyEnv(v.currentTarget.value)})" \
     "]})}):null;" \
-    "if(t.unAppID&&((!cleaned&&(applied!==\"\"||L.g(\"NOTPROTON_FORWARD_ENV\")!==\"\"))||env!==applied))Promise.resolve().then(()=>applyEnv(env));" \
-    "else if(t.unAppID&&!cleaned)saveClean();" \
+    "if(t.unAppID&&env!==applied)Promise.resolve().then(()=>applyEnv(env));" \
     "return panel})(t,L," RT ")"
 
-#define NP_CX_ENV_PANEL_LAUNCH(RT) \
-    "((t,L,React)=>{" \
-    "const envKey=\"NotProton.Environment.\"+t.unAppID," \
-    "envAppliedKey=envKey+\".applied\",envManagedKey=envKey+\".launch-managed\"," \
-    "loadLocal=()=>{try{return localStorage.getItem(envKey)||\"\"}catch(x){return\"\"}}," \
-    "saveLocal=v=>{try{if(v)localStorage.setItem(envKey,v);else localStorage.removeItem(envKey)}catch(x){}}," \
-    "loadApplied=()=>{try{return localStorage.getItem(envAppliedKey)||\"\"}catch(x){return\"\"}}," \
-    "saveApplied=v=>{try{if(v)localStorage.setItem(envAppliedKey,v);else localStorage.removeItem(envAppliedKey)}catch(x){}}," \
-    "loadManaged=()=>{try{return localStorage.getItem(envManagedKey)||\"\"}catch(x){return\"\"}}," \
-    "saveManaged=v=>{try{if(v)localStorage.setItem(envManagedKey,v);else localStorage.removeItem(envManagedKey)}catch(x){}}," \
-    "env=loadLocal(),applied=loadApplied(),managed=loadManaged()," \
-    "parse=x=>{const m=new Map();x.split(/\\r?\\n/).forEach(l=>{if(!l||/^\\s*#/.test(l))return;const i=l.indexOf(\"=\");if(i<1)return;const k=l.slice(0,i);if(/^[A-Za-z_]\\w*$/.test(k))m.set(k,[k,l.slice(i+1)])});return Array.from(m.values())}," \
-    "applyEnv=v=>{const next=parse(v),names=next.map(p=>p[0]),prior=loadManaged().split(\",\").filter(k=>/^[A-Za-z_]\\w*$/.test(k)),current=L.g(\"NOTPROTON_FORWARD_ENV\").split(\",\").filter(k=>/^[A-Za-z_]\\w*$/.test(k)),preserved=current.filter(k=>prior.indexOf(k)<0),forwarded=Array.from(new Set(preserved.concat(names))),remove=Array.from(new Set(prior.concat(names,[\"NOTPROTON_FORWARD_ENV\"]))).map(k=>[k,\"\"]);" \
-    "if(t.unAppID)L.s(remove.concat(next,[[\"NOTPROTON_FORWARD_ENV\",forwarded.join(\",\")]]));" \
-    "saveLocal(v);saveApplied(v);saveManaged(names.join(\",\"))}," \
-    "panel=t.unAppID?(0,React.jsx)(\"div\",{className:\"MSCXEnv\",children:(0,React.jsxs)(React.Fragment,{children:[" \
-    "(0,React.jsx)(\"div\",{className:\"MSCXEnvLabel\",children:\"Environment Variables\"})," \
-    "(0,React.jsx)(\"div\",{className:\"MSCXEnvHelp\",children:\"One NAME=VALUE pair per line. Lines beginning with # are comments. Saved per game and passed to the game through its launch environment.\"})," \
-    "(0,React.jsx)(\"textarea\",{className:\"MSCXEnvText\",rows:7,spellCheck:false,defaultValue:env,onChange:v=>saveLocal(v.currentTarget.value),onBlur:v=>applyEnv(v.currentTarget.value)})" \
-    "]})}):null;" \
-    "if(t.unAppID&&(env!==applied||(env!==\"\"&&managed===\"\")))Promise.resolve().then(()=>applyEnv(env));" \
-    "return panel})(t,L," RT ")"
-
+#define NP_CX_ENV_PANEL_LAUNCH(RT) NP_CX_ENV_PANEL_ROUTE(RT)
 #define NP_CX_ENV_PANEL(RT, MODE) NP_CX_ENV_PANEL_##MODE(RT)
 
 // FEX runs arm64 Wine, which has no D3DMetal and never runs under Rosetta.
