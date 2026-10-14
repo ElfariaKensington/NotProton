@@ -2,7 +2,7 @@ name: app
 
 on:
   push:
-    branches: [main]
+    branches: [main, feature/per-game-environment-variables]
   pull_request:
   workflow_dispatch:
   workflow_call:

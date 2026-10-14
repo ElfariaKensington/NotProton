@@ -27,6 +27,16 @@ const FORMS = {
 // `fallback` and `fexTools` stand in for what the hook sets before the transform.
 function panel(emit, form, globals = { document: { documentElement: { lang: 'en' } } },
                { fallback = 'notproton', fexTools = [], names = ['R0', 'B0'] } = {}) {
+  const store = new Map();
+  if (!globals.localStorage) {
+    globals.localStorage = {
+      getItem: key => store.has(key) ? store.get(key) : null,
+      setItem: (key, value) => store.set(key, String(value)),
+      removeItem: key => store.delete(key),
+    };
+    globals.__localStorage = store;
+  }
+  const storage = globals.__localStorage || store;
   const raw = execFileSync(emit, [form, fallback, ...fexTools], { encoding: 'utf8' }).trim();
   const f = FORMS[form];
   const body = expand(raw, { [f.react]: names[0], [f.barrel]: names[1] });
@@ -38,7 +48,7 @@ function panel(emit, form, globals = { document: { documentElement: { lang: 'en'
   const build = new Function(names[0], names[1], 'SteamClient', 'globalThis',
     src + '\nreturn { MSCXOpts, MSCXPick: typeof MSCXPick === "function" ? MSCXPick : null };');
   const { MSCXOpts, MSCXPick } = build(react, barrel, SteamClient, globals);
-  return { render: MSCXOpts, pick: MSCXPick, written };
+  return { render: MSCXOpts, pick: MSCXPick, written, storage };
 }
 
 // Function components are resolved rather than recorded, so a check sees the nodes the

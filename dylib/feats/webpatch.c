@@ -209,7 +209,7 @@ static int out_expand(np_out_t *o, const char *replace, const np_cap_t *caps) {
     "g=k=>{const p=E.e.filter(w=>o.startsWith(k+\"=\",w.start)).pop();" \
     "return p?(p.value===null?o.slice(p.start+k.length+1,p.end):p.value.slice(k.length+1)):\"\"}," \
     "qv=v=>/^[\\w.,:=\\/+@%-]*$/.test(v)?v:\"'\"+v.replace(/'/g,\"'\\\\''\")+\"'\"," \
-    "s=ps=>{const add=ps.filter(p=>p[1]).map(p=>p[0]+\"=\"+qv(p[1])).join(\" \");let r;" \
+    "s=ps=>{const add=ps.filter(p=>p[1]!==null&&p[1]!==void 0).map(p=>p[0]+\"=\"+qv(p[1])).join(\" \");let r;" \
     "if(!/%command%/i.test(o)){if(!add)return;r=add+\" %command%\"+(o.trim()?\" \"+o:\"\")}" \
     "else{let at=E.p;r=o.slice(0,at)+(add?add+\" \":\"\");" \
     "E.e.forEach(w=>{if(ps.some(p=>o.startsWith(p[0]+\"=\",w.start))){" \
@@ -223,7 +223,7 @@ static int out_expand(np_out_t *o, const char *replace, const np_cap_t *caps) {
     "const L=MSCXLaunch(o,t.unAppID)," \
     "ks=L.k.filter(k=>/^D3DM_[A-Z0-9_]*$/.test(k)||k===\"ROSETTA_ADVERTISE_AVX\"" \
     "||k===\"CX_GRAPHICS_BACKEND\"&&L.g(k)===\"d3dmetal\");" \
-    "ks.length&&L.s(ks.map(k=>[k,\"\"]))}"
+    "ks.length&&L.s(ks.map(k=>[k,null]))}"
 
 // CrossOver options panel. Not in great shape, but it'll do
 #define NP_WEB_IS_ZH \
@@ -245,6 +245,9 @@ static int out_expand(np_out_t *o, const char *replace, const np_cap_t *caps) {
     ".MSCXPanel .MSCXRow{display:flex;flex-direction:row;padding:9px;margin:0;" \
     "color:#dfe3e6;background:rgba(59,63,72,.5);border-radius:3px}" \
     ".MSCXPanel .MSCXRow:hover{box-shadow:0 6px 8px 0 rgba(0,0,0,.16)}" \
+    ".MSCXPanel .MSCXEnvField{box-sizing:border-box;display:block;width:100%;min-width:0;min-height:132px;resize:vertical;padding:10px;color:#dfe3e6;background:rgba(13,15,18,.72);border:1px solid rgba(130,140,150,.35);border-radius:3px;font:12px/1.5 monospace;white-space:pre}" \
+    ".MSCXPanel .MSCXEnvField:focus{outline:1px solid #66c0f4}" \
+    ".MSCXPanel .MSCXEnvHint{margin-top:6px;color:#a7adb4;font-size:12px;line-height:1.4}" \
     ".MSCXNoBottomGap{margin-bottom:0}\""
 
 // FEX runs arm64 Wine, which has no D3DMetal and never runs under Rosetta.
@@ -254,9 +257,21 @@ static int out_expand(np_out_t *o, const char *replace, const np_cap_t *caps) {
     "fex=" NP_FEX_TOOLS ".indexOf(t.strCompatToolName||\"" NP_FALLBACK_TOOL "\")>=0," \
     "npZh=" NP_WEB_IS_ZH ",npL=(en,zh)=>npZh?zh:en," \
     "L=MSCXLaunch(o,t.unAppID),g=L.g,s=L.s," \
+    "envKey=\"NOTPROTON_GAME_ENV_B64\",envStore=\"NotProtonGameEnv_\"+t.unAppID," \
+    "envDraftKey=envStore+\"_draft\",envAppliedKey=envStore+\"_applied\"," \
+    "envRead=k=>{try{return globalThis.localStorage?.getItem(k)}catch(e){return null}}," \
+    "envSaved=envRead(envDraftKey),envDraft=envSaved===null?(envRead(envAppliedKey)||\"\"):envSaved," \
+    "envParse=raw=>{const m=new Map;for(const line of raw.split(/\\r?\\n/)){const x=line.trim();" \
+    "if(!x||x[0]===\"#\")continue;const i=line.indexOf(\"=\");if(i<1)continue;" \
+    "const k=line.slice(0,i).trim(),v=line.slice(i+1);if(/^[A-Za-z_][A-Za-z0-9_]*$/.test(k))m.set(k,v)}return m}," \
+    "envEdit=e=>{try{globalThis.localStorage?.setItem(envDraftKey,e.target.value)}catch(err){}}," \
+    "envApply=e=>{const raw=e.target.value,entries=[...envParse(raw)],payload=entries.map(([k,v])=>k+\"=\"+v).join(\"\\n\")," \
+    "token=payload?btoa(unescape(encodeURIComponent(payload))):null;" \
+    "try{globalThis.localStorage?.setItem(envDraftKey,raw);globalThis.localStorage?.setItem(envAppliedKey,raw)}catch(err){}" \
+    "s([[envKey,token]])}," \
     "T=(ks,l,on,off)=>(0," RT ".jsx)(" BARREL ".Yh,{className:\"MSCXRow\",label:l," \
     "checked:g(ks[0])===on," \
-    "onChange:v=>s(ks.map(k=>[k,v?on:(off||\"\")]))},ks[0])," \
+    "onChange:v=>s(ks.map(k=>[k,v?on:(off||null)]))},ks[0])," \
     "bv=g(\"CX_GRAPHICS_BACKEND\"),b=fex&&\"d3dmetal\"===bv?\"\":bv," \
     "dm=!fex&&(\"\"===b||\"d3dmetal\"===b)," \
     "dx=\"\"===b||\"dxmt\"===b," \
@@ -283,11 +298,11 @@ static int out_expand(np_out_t *o, const char *replace, const np_cap_t *caps) {
     "(0," RT ".jsx)(\"style\",{children:" NP_CX_OPTIONS_CSS "})," \
     "(0," RT ".jsxs)(" BARREL ".XY,{label:npL(\"Graphics\",\"图形\"),children:[" \
     "(0," RT ".jsx)(" BARREL ".m,{rgOptions:B,selectedOption:b," \
-    "onChange:v=>s([[\"CX_GRAPHICS_BACKEND\",v.data]]" \
-    ".concat(\"\"===v.data||\"d3dmetal\"===v.data?[]:[[\"D3DM_ENABLE_METALFX\",\"\"]])" \
+    "onChange:v=>s([[\"CX_GRAPHICS_BACKEND\",v.data||null]]" \
+    ".concat(\"\"===v.data||\"d3dmetal\"===v.data?[]:[[\"D3DM_ENABLE_METALFX\",null]])" \
     ".concat(\"\"===v.data||\"dxmt\"===v.data?[]:" \
-    "[[\"DXMT_METALFX_SPATIAL_SWAPCHAIN\",\"\"],[\"DXMT_CONFIG\",fx(\"\")]])" \
-    ".concat(\"dxmt\"===v.data?[]:[[\"DXMT_ENABLE_NVEXT\",\"\"]]))})," \
+    "[[\"DXMT_METALFX_SPATIAL_SWAPCHAIN\",null],[\"DXMT_CONFIG\",fx(\"\")||null]])" \
+    ".concat(\"dxmt\"===v.data?[]:[[\"DXMT_ENABLE_NVEXT\",null]]))})," \
     "T([\"MTL_HUD_ENABLED\"],npL(\"Metal HUD\",\"Metal 性能监视器\"),\"1\")," \
     "dm&&T([\"D3DM_ENABLE_METALFX\"],\"DLSS\",\"1\")," \
     "\"dxmt\"===b&&T([\"DXMT_ENABLE_NVEXT\"],\"DLSS\",\"1\")," \
@@ -300,11 +315,19 @@ static int out_expand(np_out_t *o, const char *replace, const np_cap_t *caps) {
     "\"MetalFX 超分辨率（以游戏设置的分辨率为采样来源）\")," \
     "children:(0," RT ".jsx)(" BARREL ".m,{rgOptions:U," \
     "selectedOption:sw?(U.find(u=>u.data&&+u.data===fn)||{data:String(fn)}).data:\"\"," \
-    "onChange:v=>s([[\"DXMT_METALFX_SPATIAL_SWAPCHAIN\",v.data?\"1\":\"\"],[\"DXMT_CONFIG\",fx(v.data)]])})},\"usf\")," \
+    "onChange:v=>s([[\"DXMT_METALFX_SPATIAL_SWAPCHAIN\",v.data?\"1\":null],[\"DXMT_CONFIG\",fx(v.data)||null]])})},\"usf\")," \
     "(0," RT ".jsx)(" BARREL ".XY,{label:npL(\"Controllers (May break Steam Input. Not recommended)\"," \
     "\"控制器（可能导致 Steam Input 失效，不推荐）\"),children:" \
     "T([\"NOTPROTON_RAW_CONTROLLERS\"],npL(\"Let games read controllers directly\"," \
-    "\"允许游戏直接读取控制器\"),\"1\",\"\")},\"ctl\")" \
+    "\"允许游戏直接读取控制器\"),\"1\",\"\")},\"ctl\")," \
+    "(0," RT ".jsxs)(" BARREL ".XY,{label:npL(\"Environment variables\",\"环境变量\"),children:[" \
+    "(0," RT ".jsx)(\"textarea\",{className:\"MSCXEnvField\",rows:6,defaultValue:envDraft," \
+    "placeholder:\"FOO=bar\\nDXMT_CONFIG=d3d11.example=1\",spellCheck:false," \
+    "onChange:envEdit,onBlur:envApply,\"aria-label\":npL(\"Per-game environment variables\",\"每个游戏的环境变量\")})," \
+    "(0," RT ".jsx)(\"div\",{className:\"MSCXEnvHint\",children:npL(" \
+    "\"One KEY=VALUE per line. Blank lines and # comments are ignored. Changes apply on blur; restart the game to use them.\"," \
+    "\"每行一个 KEY=VALUE；忽略空行和 # 注释。离开输入框时应用更改；重启游戏后生效。\")})" \
+    "]},\"env\")" \
     "]})})}"
 
 #define NP_CX_OPTIONS_CAPTURE(RT, BARREL) \
