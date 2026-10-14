@@ -191,6 +191,134 @@ static int save_environment_file(uint32_t appid, const char *text) {
     return 0;
 }
 
+
+static int np_env_name_valid(const char *name, size_t len) {
+    if (!len || !(((name[0] >= 'A' && name[0] <= 'Z') ||
+                   (name[0] >= 'a' && name[0] <= 'z')) || name[0] == '_'))
+        return 0;
+    for (size_t i = 1; i < len; i++) {
+        char ch = name[i];
+        if (!((ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') ||
+              (ch >= '0' && ch <= '9') || ch == '_'))
+            return 0;
+    }
+    return 1;
+}
+
+static int np_env_name_managed(const char *name, size_t len) {
+    static const char *const managed[] = {
+        "CX_ROOT", "CX_HOME", "PATH", "WINELOADER", "WINESERVER",
+        "WINEDLLPATH", "WINEPREFIX", "STEAM_COMPAT_DATA_PATH",
+        "STEAM_COMPAT_INSTALL_PATH", "STEAM_COMPAT_APP_ID",
+        "STEAM_COMPAT_CLIENT_INSTALL_PATH", "SteamAppId", "SteamGameId",
+        "NOTPROTON_FORWARD_ENV"
+    };
+    for (size_t i = 0; i < sizeof managed / sizeof managed[0]; i++) {
+        if (strlen(managed[i]) == len && memcmp(name, managed[i], len) == 0)
+            return 1;
+    }
+    return 0;
+}
+
+static int np_env_prefix_append(char *out, size_t cap, size_t *used,
+                                const char *value, size_t len) {
+    if (*used >= cap || len > cap - *used - 1)
+        return 0;
+    memcpy(out + *used, value, len);
+    *used += len;
+    out[*used] = '\0';
+    return 1;
+}
+
+// Returns shell-quoted NAME=value assignments for the app, or NULL if none exist.
+// Launch Options are not persisted or rewritten; the caller prepends this at launch time.
+char *np_compatsvc_launch_env_prefix(uint32_t appid) {
+    if (!appid) return NULL;
+
+    char library[PATH_MAX];
+    if (find_library_root(appid, library, sizeof library) != 0)
+        return NULL;
+
+    char path[PATH_MAX];
+    int n = snprintf(path, sizeof path, "%s/steamapps/compatdata/%u/%s",
+                     library, appid, NP_ENV_FILE);
+    if (n < 0 || (size_t)n >= sizeof path)
+        return NULL;
+
+    FILE *f = fopen(path, "r");
+    if (!f) return NULL;
+
+    char *text = malloc((size_t)NP_ENV_MAX + 1);
+    if (!text) {
+        fclose(f);
+        return NULL;
+    }
+    size_t text_len = fread(text, 1, (size_t)NP_ENV_MAX + 1, f);
+    int read_failed = ferror(f) || text_len > (size_t)NP_ENV_MAX;
+    fclose(f);
+    if (read_failed || memchr(text, '\0', text_len)) {
+        free(text);
+        return NULL;
+    }
+    text[text_len] = '\0';
+
+    size_t cap = (size_t)NP_ENV_MAX * 4u + 1u;
+    char *out = malloc(cap);
+    if (!out) {
+        free(text);
+        return NULL;
+    }
+    size_t used = 0;
+    out[0] = '\0';
+
+    char *line = text;
+    while (*line) {
+        char *newline = strchr(line, '\n');
+        if (newline) *newline = '\0';
+
+        size_t line_len = strlen(line);
+        if (line_len && line[line_len - 1] == '\r')
+            line[--line_len] = '\0';
+
+        if (line_len && line[0] != '#') {
+            char *eq = strchr(line, '=');
+            if (eq) {
+                size_t name_len = (size_t)(eq - line);
+                const char *value = eq + 1;
+                size_t value_len = strlen(value);
+                if (np_env_name_valid(line, name_len) &&
+                    !np_env_name_managed(line, name_len)) {
+                    int ok = np_env_prefix_append(out, cap, &used, line, name_len) &&
+                             np_env_prefix_append(out, cap, &used, "='", 2);
+                    for (size_t i = 0; ok && i < value_len; i++) {
+                        if (value[i] == '\'')
+                            ok = np_env_prefix_append(out, cap, &used, "'\\''", 4);
+                        else
+                            ok = np_env_prefix_append(out, cap, &used, value + i, 1);
+                    }
+                    if (ok)
+                        ok = np_env_prefix_append(out, cap, &used, "' ", 2);
+                    if (!ok) {
+                        free(out);
+                        free(text);
+                        return NULL;
+                    }
+                }
+            }
+        }
+
+        if (!newline) break;
+        line = newline + 1;
+    }
+
+    free(text);
+    if (!used) {
+        free(out);
+        return NULL;
+    }
+    return out;
+}
+
 // Shared by the custom beta WebUI route and the native Steam compat-tool hook.
 int np_compatsvc_handle_env_tool(uint32_t appid, const char *name) {
     if (!name || strncmp(name, NP_ENV_PREFIX, strlen(NP_ENV_PREFIX)) != 0)

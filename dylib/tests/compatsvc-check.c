@@ -660,7 +660,7 @@ static void environment_file_cases(void) {
     }
 
     int rc = specify_compat_tool(
-        build_specify_request(SPECIFY_HAS_APPID, 42, "notproton-env-v1:DXVK_HUD=1\nWINEDEBUG=-all"),
+        build_specify_request(SPECIFY_HAS_APPID, 42, "notproton-env-v1:DXVK_HUD=1\nWINEDEBUG=-all\nTEST_QUOTE=it's fine"),
         (uintptr_t)response_buf);
     check(rc == RESULT_OK, "the environment sentinel is accepted without a manager");
     FILE *saved = fopen(env_file, "r");
@@ -670,15 +670,22 @@ static void environment_file_cases(void) {
         size_t used = fread(value, 1, sizeof value - 1, saved);
         fclose(saved);
         value[used] = '\0';
-        check(strcmp(value, "DXVK_HUD=1\nWINEDEBUG=-all") == 0,
+        check(strcmp(value, "DXVK_HUD=1\nWINEDEBUG=-all\nTEST_QUOTE=it's fine") == 0,
               "the environment file keeps multiline contents");
     }
+    char *launch_prefix = np_compatsvc_launch_env_prefix(42);
+    check(launch_prefix &&
+          strcmp(launch_prefix, "DXVK_HUD='1' WINEDEBUG='-all' TEST_QUOTE='it'\\''s fine' ") == 0,
+          "per-game environment is shell-quoted as a launch prefix, including apostrophes");
+    free(launch_prefix);
 
     rc = specify_compat_tool(
         build_specify_request(SPECIFY_HAS_APPID, 42, "notproton-env-v1:"),
         (uintptr_t)response_buf);
     check(rc == RESULT_OK, "clearing the environment sentinel is accepted");
     check(access(env_file, F_OK) != 0, "clearing removes the environment file");
+    check(np_compatsvc_launch_env_prefix(42) == NULL,
+          "clearing environment settings removes the launch-time prefix");
 
     check(np_compatsvc_handle_env_tool(42, "crossover") == 0,
           "ordinary compatibility tool names pass through the native hook");

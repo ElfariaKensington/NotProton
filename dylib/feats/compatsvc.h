@@ -31,4 +31,7 @@ void np_compatsvc_suppress_state_changed(int suppress);
 // Returns 0 for an ordinary tool, 1 when saved, and -1 when saving failed.
 int np_compatsvc_handle_env_tool(uint32_t appid, const char *name);
 
+// Allocates a shell-quoted prefix of per-app NAME=value assignments; free the result.
+char *np_compatsvc_launch_env_prefix(uint32_t appid);
+
 #endif // NOTPROTON_FEATS_COMPATSVC_H

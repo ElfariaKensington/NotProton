@@ -2,6 +2,7 @@
 #include "hooks.h"
 #include "../core/macho.h"
 #include "../feats/compat.h"
+#include "../feats/compatsvc.h"
 #include "../util/log.h"
 
 #include <dlfcn.h>
@@ -111,17 +112,39 @@ static uint64_t np_hook_vr_support(void *self, uint32_t appid, char **arguments)
 
     if (!np_shell_wrapped || !arguments || !*arguments || !np_compat_app_runs_tool(appid))
         return ret;
-    size_t extra = np_count_backslashes(*arguments);
-    if (!extra)
-        return ret;
 
-    size_t len = strlen(*arguments);
-    char  *buf = plat_realloc ? plat_realloc(*arguments, len + extra + 1) : NULL;
-    if (!buf)
-        return ret;
-    np_double_backslashes(buf, len, extra);
-    *arguments = buf;
-    NP_LOG("[launch] app %u arguments: %s", appid, buf);
+    // Steam normally passes the visible Launch Options string here. Add the saved
+    // per-game environment only to this runtime copy, never to Steam's stored/UI value.
+    size_t extra = np_count_backslashes(*arguments);
+    if (extra && plat_realloc) {
+        size_t len = strlen(*arguments);
+        char *buf = plat_realloc(*arguments, len + extra + 1);
+        if (buf) {
+            np_double_backslashes(buf, len, extra);
+            *arguments = buf;
+            NP_LOG("[launch] app %u arguments after backslash normalization: %s", appid, buf);
+        }
+    }
+
+    char *env_prefix = np_compatsvc_launch_env_prefix(appid);
+    if (env_prefix) {
+        size_t prefix_len = strlen(env_prefix);
+        size_t len = strlen(*arguments);
+        if (prefix_len && plat_realloc && prefix_len <= SIZE_MAX - len - 1) {
+            char *buf = plat_realloc(*arguments, prefix_len + len + 1);
+            if (buf) {
+                memmove(buf + prefix_len, buf, len + 1);
+                memcpy(buf, env_prefix, prefix_len);
+                *arguments = buf;
+                NP_LOG("[launch] app %u per-game environment prepended to runtime launch arguments",
+                       appid);
+            } else {
+                NP_WARN("[launch] app %u could not allocate runtime launch arguments for environment",
+                        appid);
+            }
+        }
+        free(env_prefix);
+    }
     return ret;
 }
 
