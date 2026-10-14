@@ -258,10 +258,10 @@ static int out_expand(np_out_t *o, const char *replace, const np_cap_t *caps) {
     "const envKey=\"NotProton.Environment.\"+t.unAppID," \
     "envAppliedKey=envKey+\".applied\"," \
     "loadApplied=()=>{try{return localStorage.getItem(envAppliedKey)||\"\"}catch(x){return\"\"}}," \
-    "saveApplied=v=>{try{if(v)localStorage.setItem(envAppliedKey,v);else localStorage.removeItem(envAppliedKey)}catch(x){}}, \
-    "loadLocal=()=>{try{return localStorage.getItem(envKey)||\"\"}catch(x){return\"\"}}, \
-    "saveLocal=v=>{try{if(v)localStorage.setItem(envKey,v);else localStorage.removeItem(envKey)}catch(x){}}, \
-    "env=loadLocal(),applied=loadApplied(), \
+    "saveApplied=v=>{try{if(v)localStorage.setItem(envAppliedKey,v);else localStorage.removeItem(envAppliedKey)}catch(x){}}," \
+    "loadLocal=()=>{try{return localStorage.getItem(envKey)||\"\"}catch(x){return\"\"}}," \
+    "saveLocal=v=>{try{if(v)localStorage.setItem(envKey,v);else localStorage.removeItem(envKey)}catch(x){}}," \
+    "env=loadLocal(),applied=loadApplied()," \
     "applyEnv=v=>{if(!t.unAppID)return;try{Promise.resolve(SteamClient.Apps.SpecifyCompatTool(t.unAppID,\"notproton-env-v1:\"+v)).then(()=>saveApplied(v)).catch(x=>console.error(\"NotProton: failed to save per-game environment\",x))}catch(x){console.error(\"NotProton: failed to save per-game environment\",x)}}," \
     "panel=t.unAppID?(0,React.jsx)(\"div\",{className:\"MSCXEnv\",children:(0,React.jsxs)(React.Fragment,{children:[" \
     "(0,React.jsx)(\"div\",{className:\"MSCXEnvLabel\",children:\"Environment Variables\"})," \
