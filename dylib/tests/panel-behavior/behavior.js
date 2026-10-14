@@ -61,22 +61,40 @@ for (const form of Object.keys(FORMS)) {
        'compatibility settings contains a multiline environment editor');
   t.ok(!walk(P({ details: details('', { unAppID: 0 }) })).some(x => x.type === 'textarea'),
        'global Compatibility settings do not show a per-game editor');
-  const savedEnv = 'D3DMETAL_FRAMEWORK_PATH=/tmp/D3DMetal.framework/Versions/A/D3DMetal\\nFSR4_HOOK_LOG=/tmp/hook.log\\nFSR4_ROOT=/tmp/fsr4 root\\nFSR4_REPLACE=1\\nFSR4_PANEL=1\\nFSR4_VERSION=4.1.1\\nFSR4_PROFILE=lossy';
+  const savedEnv = 'D3DMETAL_FRAMEWORK_PATH=/tmp/D3DMetal.framework/Versions/A/D3DMetal\nFSR4_HOOK_LOG=/tmp/hook.log\nFSR4_ROOT=/tmp/fsr4 root\nFSR4_REPLACE=1\nFSR4_PANEL=1\nFSR4_VERSION=4.1.1\nFSR4_PROFILE=lossy';
   const envEditor = nodes('').find(x => x.type === 'textarea');
   written.length = 0; envWritten.length = 0;
   envEditor.props.onChange({ currentTarget: { value: savedEnv } });
-  t.ok(written.length === 0, 'typing only caches environment settings');
+  t.ok(written.length === 0 && envWritten.length === 0, 'typing only caches environment settings');
   envEditor.props.onBlur({ currentTarget: { value: savedEnv } });
-  t.ok(written.length === 0 && envWritten.length === 1 && envWritten[0].appid === 287700 &&
-       envWritten[0].tool === 'notproton-env-v1:' + savedEnv,
-       'blur persists per-game settings through the CompatManager route');
+  if (form === 'component') {
+    t.ok(written.length === 1 && written[0].appid === 287700 &&
+         written[0].opts.includes('D3DMETAL_FRAMEWORK_PATH=/tmp/D3DMetal.framework/Versions/A/D3DMetal') &&
+         written[0].opts.includes("FSR4_ROOT='/tmp/fsr4 root'") &&
+         written[0].opts.includes('NOTPROTON_FORWARD_ENV=D3DMETAL_FRAMEWORK_PATH,FSR4_HOOK_LOG,FSR4_ROOT,FSR4_REPLACE,FSR4_PANEL,FSR4_VERSION,FSR4_PROFILE') &&
+         written[0].opts.includes('%command%') && !written[0].opts.includes('notproton-env-v1:') &&
+         envWritten.length === 0,
+         'legacy editor saves variables and launcher forwarding through SetAppLaunchOptions');
+  } else {
+    t.ok(written.length === 0 && envWritten.length === 1 && envWritten[0].appid === 287700 &&
+         envWritten[0].tool === 'notproton-env-v1:' + savedEnv,
+         'beta editor persists per-game settings through CompatManager');
+  }
   t.ok(nodes('').find(x => x.type === 'textarea').props.defaultValue === savedEnv,
-       'the editor restores the cached environment value');
-  envWritten.length = 0;
+       'the editor restores the cached multiline environment value');
+  written.length = 0; envWritten.length = 0;
   envEditor.props.onChange({ currentTarget: { value: '' } });
   envEditor.props.onBlur({ currentTarget: { value: '' } });
-  t.ok(envWritten.length === 1 && envWritten[0].tool === 'notproton-env-v1:',
-       'clearing the editor requests removal of saved settings');
+  if (form === 'component') {
+    t.ok(written.length === 1 && !written[0].opts.includes('D3DMETAL_FRAMEWORK_PATH=') &&
+         !written[0].opts.includes('FSR4_PROFILE=') &&
+         !written[0].opts.includes('NOTPROTON_FORWARD_ENV=') &&
+         written[0].opts.includes('%command%'),
+         'clearing the legacy editor removes its managed launch variables');
+  } else {
+    t.ok(envWritten.length === 1 && envWritten[0].tool === 'notproton-env-v1:',
+         'clearing the beta editor requests removal of saved settings');
+  }
 
   nodes('CX_GRAPHICS_BACKEND=dxmt').filter(x => x.type === 'Dropdown')[1].props.onChange({ data: '2.0' });
   t.ok(last().includes('metalSpatialUpscaleFactor=2.0'), 'the upscaler writes its factor');
