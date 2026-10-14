@@ -61,7 +61,7 @@ for (const form of Object.keys(FORMS)) {
        'compatibility settings contains a multiline environment editor');
   t.ok(!walk(P({ details: details('', { unAppID: 0 }) })).some(x => x.type === 'textarea'),
        'global Compatibility settings do not show a per-game editor');
-  const savedEnv = 'D3DMETAL_FRAMEWORK_PATH=/tmp/D3DMetal.framework/Versions/A/D3DMetal\nFSR4_HOOK_LOG=/tmp/hook.log\nFSR4_ROOT=/tmp/fsr4 root\nFSR4_REPLACE=1\nFSR4_PANEL=1\nFSR4_VERSION=4.1.1\nFSR4_PROFILE=lossy';
+  const savedEnv = 'TEST_FRAMEWORK_PATH=/tmp/example/D3DMetal.framework\nTEST_HOOK_LOG=/tmp/notproton-hook.log\nTEST_ROOT=/tmp/test root\nTEST_REPLACE=1\nTEST_PANEL=1\nTEST_VERSION=1.0\nTEST_PROFILE=default';
   const envEditor = nodes('').find(x => x.type === 'textarea');
   written.length = 0; envWritten.length = 0;
   envEditor.props.onChange({ currentTarget: { value: savedEnv } });
@@ -69,9 +69,9 @@ for (const form of Object.keys(FORMS)) {
   envEditor.props.onBlur({ currentTarget: { value: savedEnv } });
   if (form === 'component') {
     t.ok(written.length === 1 && written[0].appid === 287700 &&
-         written[0].opts.includes('D3DMETAL_FRAMEWORK_PATH=/tmp/D3DMetal.framework/Versions/A/D3DMetal') &&
-         written[0].opts.includes("FSR4_ROOT='/tmp/fsr4 root'") &&
-         written[0].opts.includes('NOTPROTON_FORWARD_ENV=D3DMETAL_FRAMEWORK_PATH,FSR4_HOOK_LOG,FSR4_ROOT,FSR4_REPLACE,FSR4_PANEL,FSR4_VERSION,FSR4_PROFILE') &&
+         written[0].opts.includes('TEST_FRAMEWORK_PATH=/tmp/example/D3DMetal.framework') &&
+         written[0].opts.includes("TEST_ROOT='/tmp/test root'") &&
+         written[0].opts.includes('NOTPROTON_FORWARD_ENV=TEST_FRAMEWORK_PATH,TEST_HOOK_LOG,TEST_ROOT,TEST_REPLACE,TEST_PANEL,TEST_VERSION,TEST_PROFILE') &&
          written[0].opts.includes('%command%') && !written[0].opts.includes('notproton-env-v1:') &&
          envWritten.length === 0,
          'legacy editor saves variables and launcher forwarding through SetAppLaunchOptions');
@@ -86,8 +86,8 @@ for (const form of Object.keys(FORMS)) {
   envEditor.props.onChange({ currentTarget: { value: '' } });
   envEditor.props.onBlur({ currentTarget: { value: '' } });
   if (form === 'component') {
-    t.ok(written.length === 1 && !written[0].opts.includes('D3DMETAL_FRAMEWORK_PATH=') &&
-         !written[0].opts.includes('FSR4_PROFILE=') &&
+    t.ok(written.length === 1 && !written[0].opts.includes('TEST_FRAMEWORK_PATH=') &&
+         !written[0].opts.includes('TEST_PROFILE=') &&
          !written[0].opts.includes('NOTPROTON_FORWARD_ENV=') &&
          written[0].opts.includes('%command%'),
          'clearing the legacy editor removes its managed launch variables');
