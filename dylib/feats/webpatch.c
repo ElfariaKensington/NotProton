@@ -253,7 +253,7 @@ static int out_expand(np_out_t *o, const char *replace, const np_cap_t *caps) {
     "font:12px ui-monospace,SFMono-Regular,Menlo,monospace;color:#e7e9ec;background:#202329;" \
     "border:1px solid #4b5260;border-radius:3px;outline:none}\""
 
-#define NP_CX_ENV_PANEL(RT) \
+#define NP_CX_ENV_PANEL_ROUTE(RT) \
     "((t,L,React)=>{" \
     "const envKey=\"NotProton.Environment.\"+t.unAppID," \
     "envAppliedKey=envKey+\".applied\",envCleanKey=envKey+\".launch-cleaned\"," \
@@ -276,8 +276,33 @@ static int out_expand(np_out_t *o, const char *replace, const np_cap_t *caps) {
     "else if(t.unAppID&&!cleaned)saveClean();" \
     "return panel})(t,L," RT ")"
 
+#define NP_CX_ENV_PANEL_LAUNCH(RT) \
+    "((t,L,React)=>{" \
+    "const envKey=\"NotProton.Environment.\"+t.unAppID," \
+    "envAppliedKey=envKey+\".applied\",envManagedKey=envKey+\".launch-managed\"," \
+    "loadLocal=()=>{try{return localStorage.getItem(envKey)||\"\"}catch(x){return\"\"}}," \
+    "saveLocal=v=>{try{if(v)localStorage.setItem(envKey,v);else localStorage.removeItem(envKey)}catch(x){}}," \
+    "loadApplied=()=>{try{return localStorage.getItem(envAppliedKey)||\"\"}catch(x){return\"\"}}," \
+    "saveApplied=v=>{try{if(v)localStorage.setItem(envAppliedKey,v);else localStorage.removeItem(envAppliedKey)}catch(x){}}," \
+    "loadManaged=()=>{try{return localStorage.getItem(envManagedKey)||\"\"}catch(x){return\"\"}}," \
+    "saveManaged=v=>{try{if(v)localStorage.setItem(envManagedKey,v);else localStorage.removeItem(envManagedKey)}catch(x){}}," \
+    "env=loadLocal(),applied=loadApplied(),managed=loadManaged()," \
+    "parse=x=>{const m=new Map();x.split(/\\r?\\n/).forEach(l=>{if(!l||/^\\s*#/.test(l))return;const i=l.indexOf(\"=\");if(i<1)return;const k=l.slice(0,i);if(/^[A-Za-z_]\\w*$/.test(k))m.set(k,[k,l.slice(i+1)])});return Array.from(m.values())}," \
+    "applyEnv=v=>{const next=parse(v),names=next.map(p=>p[0]),prior=managed.split(\",\").filter(k=>/^[A-Za-z_]\\w*$/.test(k)),current=L.g(\"NOTPROTON_FORWARD_ENV\").split(\",\").filter(k=>/^[A-Za-z_]\\w*$/.test(k)),preserved=current.filter(k=>prior.indexOf(k)<0),forwarded=Array.from(new Set(preserved.concat(names))),remove=Array.from(new Set(prior.concat(names,[\"NOTPROTON_FORWARD_ENV\"]))).map(k=>[k,\"\"]);" \
+    "if(t.unAppID)L.s(remove.concat(next,[[\"NOTPROTON_FORWARD_ENV\",forwarded.join(\",\")]]));" \
+    "saveLocal(v);saveApplied(v);saveManaged(names.join(\",\"))}," \
+    "panel=t.unAppID?(0,React.jsx)(\"div\",{className:\"MSCXEnv\",children:(0,React.jsxs)(React.Fragment,{children:[" \
+    "(0,React.jsx)(\"div\",{className:\"MSCXEnvLabel\",children:\"Environment Variables\"})," \
+    "(0,React.jsx)(\"div\",{className:\"MSCXEnvHelp\",children:\"One NAME=VALUE pair per line. Lines beginning with # are comments. Saved per game and passed to the game through its launch environment.\"})," \
+    "(0,React.jsx)(\"textarea\",{className:\"MSCXEnvText\",rows:7,spellCheck:false,defaultValue:env,onChange:v=>saveLocal(v.currentTarget.value),onBlur:v=>applyEnv(v.currentTarget.value)})" \
+    "]})}):null;" \
+    "if(t.unAppID&&(env!==applied||(env!==\"\"&&managed===\"\")))Promise.resolve().then(()=>applyEnv(env));" \
+    "return panel})(t,L," RT ")"
+
+#define NP_CX_ENV_PANEL(RT, MODE) NP_CX_ENV_PANEL_##MODE(RT)
+
 // FEX runs arm64 Wine, which has no D3DMetal and never runs under Rosetta.
-#define NP_CX_OPTIONS_BODY(ARG, RT, BARREL) \
+#define NP_CX_OPTIONS_BODY(ARG, RT, BARREL, ENV_MODE) \
     ARG "=>{" \
     "const t=" ARG ".details,o=t.strLaunchOptions||\"\"," \
     "fex=" NP_FEX_TOOLS ".indexOf(t.strCompatToolName||\"" NP_FALLBACK_TOOL "\")>=0," \
@@ -334,20 +359,20 @@ static int out_expand(np_out_t *o, const char *replace, const np_cap_t *caps) {
     "\"控制器（可能导致 Steam Input 失效，不推荐）\"),children:" \
     "T([\"NOTPROTON_RAW_CONTROLLERS\"],npL(\"Let games read controllers directly\"," \
     "\"允许游戏直接读取控制器\"),\"1\",\"\")},\"ctl\")," \
-    NP_CX_ENV_PANEL(RT) \
+    NP_CX_ENV_PANEL(RT, ENV_MODE) \
         "]})})}"
 
-#define NP_CX_OPTIONS_CAPTURE(RT, BARREL) \
-    "((npReact,npUI)=>" NP_CX_OPTIONS_BODY("np", "npReact()", "npUI()") ")(()=>" RT ",()=>" BARREL ")"
+#define NP_CX_OPTIONS_CAPTURE(RT, BARREL, ENV_MODE) \
+    "((npReact,npUI)=>" NP_CX_OPTIONS_BODY("np", "npReact()", "npUI()", ENV_MODE) ")(()=>" RT ",()=>" BARREL ")"
 
 #define NP_CX_OPTIONS_COMPONENT \
     "MSCXLaunch=" NP_CX_LAUNCH ",MSCXPick=" NP_CX_PICK "," \
-    "MSCXOpts=" NP_CX_OPTIONS_CAPTURE(NP_C4, NP_C5) ","
+    "MSCXOpts=" NP_CX_OPTIONS_CAPTURE(NP_C4, NP_C5, LAUNCH) ","
 
 // Valve is testing a new compatibility page UI, this logic relates to supporting that
 #define NP_CX_OPTIONS_STATEMENT \
     "var MSCXLaunch=" NP_CX_LAUNCH ";" \
-    "var MSCXOpts=" NP_CX_OPTIONS_CAPTURE(NP_C3, NP_C4) ";"
+    "var MSCXOpts=" NP_CX_OPTIONS_CAPTURE(NP_C3, NP_C4, ROUTE) ";"
 
 // 1.0.x saved CrossOver settings without %command%, this migrates them.
 #define NP_LAUNCH_MIGRATION_RULE \
