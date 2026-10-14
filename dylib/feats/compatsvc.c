@@ -7,6 +7,7 @@
 #include <unistd.h>
 #include <errno.h>
 #include <limits.h>
+#include <stdatomic.h>
 
 #include "../util/file.h"
 
@@ -432,14 +433,17 @@ static int specify_compat_tool(uintptr_t request, uintptr_t response) {
 
 static uintptr_t g_state_changed;
 static int g_routes = NP_COMPATSVC_UNTRIED;
-static _Thread_local int g_suppress_state_changed;
+static _Atomic int g_suppress_state_changed;
 
 void np_compatsvc_suppress_state_changed(int suppress) {
-    g_suppress_state_changed = suppress != 0;
+    /* Mapping can notify from a Steam-owned thread different from the WebUI route. */
+    atomic_store_explicit(&g_suppress_state_changed, suppress != 0, memory_order_release);
 }
 
 void np_compatsvc_state_changed(void) {
-    if (!g_state_changed || g_suppress_state_changed) return;
+    if (!g_state_changed ||
+        atomic_load_explicit(&g_suppress_state_changed, memory_order_acquire))
+        return;
     np_webui_notify(ROUTE_NOTIFY_STATE_CHANGED, g_state_changed);
 }
 
