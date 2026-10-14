@@ -6,7 +6,7 @@ if (!emit) { console.error('usage: launch-options.js <emit>'); process.exit(2); 
 
 let failed = 0;
 for (const form of Object.keys(FORMS)) {
-  const { render: P, written } = panel(emit, form);
+  const { render: P, written, storage } = panel(emit, form);
   const t = runner(form);
   const nodes = opts => walk(P({ details: details(opts) }));
   const last = () => written[written.length - 1].opts;
