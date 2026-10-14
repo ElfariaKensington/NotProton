@@ -193,6 +193,43 @@ without_lock_fds() {
 export WINEDLLPATH="$CX_ROOT/lib/wine/x86_64-windows:$wine_unix${WINEDLLPATH:+:$WINEDLLPATH}"
 export PATH="$CX_ROOT/bin:$PATH"
 
+load_prefix_environment() {
+  env_file="$STEAM_COMPAT_DATA_PATH/notproton-environment"
+  [ -r "$env_file" ] || return 0
+
+  while IFS= read -r env_line || [ -n "$env_line" ]; do
+    case "$env_line" in
+      ""|\#*) continue ;;
+      *=*) ;;
+      *)
+        echo "=== ignored invalid environment setting: $env_line ===" >> "$log" 2>&1 || true
+        continue
+        ;;
+    esac
+    env_name=${env_line%%=*}
+    env_value=${env_line#*=}
+    case "$env_name" in
+      ""|[0-9]*|*[!A-Za-z0-9_]*)
+        echo "=== ignored invalid environment name: $env_name ===" >> "$log" 2>&1 || true
+        continue
+        ;;
+    esac
+    case "$env_name" in
+      CX_ROOT|CX_HOME|PATH|WINELOADER|WINESERVER|WINEDLLPATH|WINEPREFIX|STEAM_COMPAT_DATA_PATH|STEAM_COMPAT_INSTALL_PATH|STEAM_COMPAT_APP_ID|STEAM_COMPAT_CLIENT_INSTALL_PATH|SteamAppId|SteamGameId|NOTPROTON_FORWARD_ENV)
+        echo "=== ignored managed environment name: $env_name ===" >> "$log" 2>&1 || true
+        continue
+        ;;
+    esac
+    if printf "%s\n" "$launch_env_names" | grep -Fqx "$env_name"; then
+      echo "=== launch options override saved environment value: $env_name ===" >> "$log" 2>&1 || true
+      continue
+    fi
+    export "$env_name=$env_value"
+  done < "$env_file"
+}
+
+launch_env_names=$(env | sed -n "s/^\([A-Za-z_][A-Za-z0-9_]*\)=.*/\1/p")
+
 if [ -n "$STEAM_COMPAT_DATA_PATH" ]; then
   log="$STEAM_COMPAT_DATA_PATH/notproton-run.log"
 else
@@ -1259,6 +1296,8 @@ fi
 
 export WINEDEBUG="${WINEDEBUG:-err+all,fixme-all}"
 exec 8>&-
+# Apply saved per-game values after the bridge and runner have configured defaults.
+load_prefix_environment
 trap - EXIT
 printf 'launch_args=%s\n' "$launch_args" >> "$log" 2>&1 || true
 printf '=== launching (%s): %s %s ===\n' "$verb" "$WINELOADER" "$*" >> "$log" 2>&1 || true
@@ -1485,7 +1524,21 @@ else
   echo "=== client staged no overlay renderer, overlay disabled ===" >> "$log" 2>&1 || true
 fi
 set -- --args "$shim_exe" "$@"
-for name in $(env | LC_ALL=C sed -nE 's/^(CX_APPLEGPTK_LIBD3DSHARED_PATH|Steam[A-Za-z0-9]*|(CX_GRAPHICS|D3DM_|DXMT_|DXVK_|MTL_|ROSETTA_)[A-Z0-9_]*)=.*/\1/p'); do
+for name in $(
+  {
+    env | LC_ALL=C sed -nE 's/^(CX_APPLEGPTK_LIBD3DSHARED_PATH|Steam[A-Za-z0-9]*|STEAM_[A-Za-z0-9_]+|(CX_GRAPHICS|D3DM_|DXMT_|DXVK_|MTL_|ROSETTA_)[A-Z0-9_]*)=.*/\1/p'
+    if [ -r "$STEAM_COMPAT_DATA_PATH/notproton-environment" ]; then
+      sed -nE '/^[[:space:]]*#/d; /^[[:space:]]*$/d; s/^([A-Za-z_][A-Za-z0-9_]*)=.*/\1/p' \
+        "$STEAM_COMPAT_DATA_PATH/notproton-environment"
+    fi
+    printf "%s\n" "$NOTPROTON_FORWARD_ENV" | tr ',' '\n' | sed -nE '/^[A-Za-z_][A-Za-z0-9_]*$/p'
+  } | LC_ALL=C sort -u
+); do
+  case "$name" in
+    CX_ROOT|CX_HOME|PATH|WINELOADER|WINESERVER|WINEDLLPATH|WINEPREFIX|STEAM_COMPAT_DATA_PATH|STEAM_COMPAT_INSTALL_PATH|STEAM_COMPAT_APP_ID|STEAM_COMPAT_CLIENT_INSTALL_PATH|SteamAppId|SteamGameId|NOTPROTON_FORWARD_ENV)
+      continue
+      ;;
+  esac
   eval "value=\$$name"
   # shellcheck disable=SC2154 # eval assigns value on the line above
   set -- --env "$name=$value" "$@"

@@ -245,7 +245,37 @@ static int out_expand(np_out_t *o, const char *replace, const np_cap_t *caps) {
     ".MSCXPanel .MSCXRow{display:flex;flex-direction:row;padding:9px;margin:0;" \
     "color:#dfe3e6;background:rgba(59,63,72,.5);border-radius:3px}" \
     ".MSCXPanel .MSCXRow:hover{box-shadow:0 6px 8px 0 rgba(0,0,0,.16)}" \
-    ".MSCXNoBottomGap{margin-bottom:0}\""
+    ".MSCXNoBottomGap{margin-bottom:0}" \
+    ".MSCXEnv{padding:10px;margin-top:10px;color:#dfe3e6;background:rgba(59,63,72,.5);border-radius:3px}" \
+    ".MSCXEnvLabel{font-weight:600;margin-bottom:4px}" \
+    ".MSCXEnvHelp{color:#aeb4bd;margin-bottom:7px;font-size:12px}" \
+    ".MSCXEnvText{box-sizing:border-box;width:100%;min-height:150px;padding:8px;resize:vertical;" \
+    "font:12px ui-monospace,SFMono-Regular,Menlo,monospace;color:#e7e9ec;background:#202329;" \
+    "border:1px solid #4b5260;border-radius:3px;outline:none}\""
+
+#define NP_CX_ENV_PANEL(RT) \
+    "((t,L,React)=>{" \
+    "const envKey=\"NotProton.Environment.\"+t.unAppID," \
+    "envAppliedKey=envKey+\".applied\",envCleanKey=envKey+\".launch-cleaned\"," \
+    "loadApplied=()=>{try{return localStorage.getItem(envAppliedKey)||\"\"}catch(x){return\"\"}}," \
+    "saveApplied=v=>{try{if(v)localStorage.setItem(envAppliedKey,v);else localStorage.removeItem(envAppliedKey)}catch(x){}}," \
+    "loadClean=()=>{try{return localStorage.getItem(envCleanKey)===\"1\"}catch(x){return false}}," \
+    "saveClean=()=>{try{localStorage.setItem(envCleanKey,\"1\")}catch(x){}}," \
+    "loadLocal=()=>{try{return localStorage.getItem(envKey)||\"\"}catch(x){return\"\"}}," \
+    "saveLocal=v=>{try{if(v)localStorage.setItem(envKey,v);else localStorage.removeItem(envKey)}catch(x){}}," \
+    "env=loadLocal(),applied=loadApplied(),cleaned=loadClean()," \
+    "applyEnv=v=>{const parse=x=>x.split(/\\r?\\n/).filter(l=>l&&!/^\\s*#/.test(l)&&/^[A-Za-z_]\\w*=/.test(l)).map(l=>{const i=l.indexOf(\"=\");return[l.slice(0,i),l.slice(i+1)]}),prior=parse(applied),forwarded=L.g(\"NOTPROTON_FORWARD_ENV\").split(\",\").filter(k=>/^[A-Za-z_]\\w*$/.test(k)),remove=Array.from(new Set(prior.map(p=>p[0]).concat(forwarded))).map(k=>[k,\"\"]).concat([[\"NOTPROTON_FORWARD_ENV\",\"\"]]),hasLegacy=L.k.some(k=>remove.some(p=>k===p[0]));" \
+    "if(t.unAppID){if(hasLegacy)L.s(remove);SteamClient.Apps.SpecifyCompatTool(t.unAppID,\"notproton-env-v1:\"+v)}" \
+    "saveApplied(v);saveClean()}," \
+    "panel=t.unAppID?(0,React.jsx)(\"div\",{className:\"MSCXEnv\",children:(0,React.jsxs)(React.Fragment,{children:[" \
+    "(0,React.jsx)(\"div\",{className:\"MSCXEnvLabel\",children:\"Environment Variables\"})," \
+    "(0,React.jsx)(\"div\",{className:\"MSCXEnvHelp\",children:\"One NAME=VALUE pair per line. Lines beginning with # are comments. Saved for this game by NotProton; launch options are left unchanged.\"})," \
+    "(0,React.jsx)(\"textarea\",{className:\"MSCXEnvText\",rows:7,spellCheck:false,defaultValue:env,onChange:v=>saveLocal(v.currentTarget.value),onBlur:v=>applyEnv(v.currentTarget.value)})" \
+    "]})}):null;" \
+    "if(t.unAppID&&((!cleaned&&(applied!==\"\"||L.g(\"NOTPROTON_FORWARD_ENV\")!==\"\"))||env!==applied))Promise.resolve().then(()=>applyEnv(env));" \
+    "else if(t.unAppID&&!cleaned)saveClean();" \
+    "return panel" \
+    "return panel})(t,L," RT ")"
 
 // FEX runs arm64 Wine, which has no D3DMetal and never runs under Rosetta.
 #define NP_CX_OPTIONS_BODY(ARG, RT, BARREL) \
@@ -304,8 +334,9 @@ static int out_expand(np_out_t *o, const char *replace, const np_cap_t *caps) {
     "(0," RT ".jsx)(" BARREL ".XY,{label:npL(\"Controllers (May break Steam Input. Not recommended)\"," \
     "\"控制器（可能导致 Steam Input 失效，不推荐）\"),children:" \
     "T([\"NOTPROTON_RAW_CONTROLLERS\"],npL(\"Let games read controllers directly\"," \
-    "\"允许游戏直接读取控制器\"),\"1\",\"\")},\"ctl\")" \
-    "]})})}"
+    "\"允许游戏直接读取控制器\"),\"1\",\"\")},\"ctl\")" \, " \
+    NP_CX_ENV_PANEL(RT) \
+        "]})})}"
 
 #define NP_CX_OPTIONS_CAPTURE(RT, BARREL) \
     "((npReact,npUI)=>" NP_CX_OPTIONS_BODY("np", "npReact()", "npUI()") ")(()=>" RT ",()=>" BARREL ")"

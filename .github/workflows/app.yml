@@ -5,6 +5,15 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+    inputs:
+      runner:
+        description: Runner to use
+        type: choice
+        required: true
+        default: xcode-27
+        options:
+          - xcode-27
+          - self-hosted
   workflow_call:
 
 permissions:
@@ -17,14 +26,23 @@ env:
 jobs:
   build:
     name: full app build
-    runs-on: xcode-27
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && inputs.runner == 'self-hosted' && fromJSON('["self-hosted", "macOS"]') || 'xcode-27' }}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
       - name: Record the toolchain
         run: |
-          sudo xcode-select -s /Applications/Xcode_27.0.app
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ inputs.runner }}" == "self-hosted" ]]; then
+            if [[ -d /Applications/Xcode_27.0.app/Contents/Developer ]]; then
+              sudo xcode-select -s /Applications/Xcode_27.0.app
+            else
+              echo "Xcode_27.0.app is not installed; using the active Xcode on this self-hosted runner."
+              echo "Active developer directory: $(xcode-select -p)"
+            fi
+          else
+            sudo xcode-select -s /Applications/Xcode_27.0.app
+          fi
           xcodebuild -version
           swift --version
           echo "macOS SDK $(xcrun --sdk macosx --show-sdk-version)"

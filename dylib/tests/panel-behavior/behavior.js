@@ -6,6 +6,7 @@ const emit = process.argv[2];
 if (!emit) { console.error('usage: behavior.js <emit>'); process.exit(2); }
 
 let failed = 0;
+(async () => {
 for (const form of Object.keys(FORMS)) {
   const { render: P, written } = panel(emit, form);
   const t = runner(form);
@@ -55,6 +56,28 @@ for (const form of Object.keys(FORMS)) {
   t.ok(nodes('MTL_HUD_ENABLED=1').find(x => x.props.label === 'Metal HUD').props.checked === true,
        'a toggle reads as on from its argument');
 
+  const emptyEnv = nodes('').find(x => x.type === 'textarea');
+  t.ok(emptyEnv && emptyEnv.props.rows === 7 && emptyEnv.props.className === 'MSCXEnvText',
+       'compatibility settings contains a multiline environment editor');
+  t.ok(!walk(P({ details: details('', { unAppID: 0 }) })).some(x => x.type === 'textarea'),
+       'global Compatibility settings do not show a per-game editor');
+  const savedEnv = 'D3DMETAL_FRAMEWORK_PATH=/tmp/D3DMetal.framework/Versions/A/D3DMetal\\nFSR4_HOOK_LOG=/tmp/hook.log\\nFSR4_ROOT=/tmp/fsr4 root\\nFSR4_REPLACE=1\\nFSR4_PANEL=1\\nFSR4_VERSION=4.1.1\\nFSR4_PROFILE=lossy';
+  const envEditor = nodes('').find(x => x.type === 'textarea');
+  written.length = 0; envWritten.length = 0;
+  envEditor.props.onChange({ currentTarget: { value: savedEnv } });
+  t.ok(written.length === 0, 'typing only caches environment settings');
+  envEditor.props.onBlur({ currentTarget: { value: savedEnv } });
+  t.ok(written.length === 0 && envWritten.length === 1 && envWritten[0].appid === 287700 &&
+       envWritten[0].tool === 'notproton-env-v1:' + savedEnv,
+       'blur persists per-game settings through the CompatManager route');
+  t.ok(nodes('').find(x => x.type === 'textarea').props.defaultValue === savedEnv,
+       'the editor restores the cached environment value');
+  envWritten.length = 0;
+  envEditor.props.onChange({ currentTarget: { value: '' } });
+  envEditor.props.onBlur({ currentTarget: { value: '' } });
+  t.ok(envWritten.length === 1 && envWritten[0].tool === 'notproton-env-v1:',
+       'clearing the editor requests removal of saved settings');
+
   nodes('CX_GRAPHICS_BACKEND=dxmt').filter(x => x.type === 'Dropdown')[1].props.onChange({ data: '2.0' });
   t.ok(last().includes('metalSpatialUpscaleFactor=2.0'), 'the upscaler writes its factor');
 
@@ -100,8 +123,22 @@ for (const form of Object.keys(FORMS)) {
   const shadowed = walk(S({ details: details('CX_GRAPHICS_BACKEND=dxmt %command%') }));
   t.ok(JSON.stringify(shadowed) === JSON.stringify(nodes('CX_GRAPHICS_BACKEND=dxmt')),
        'a page naming its runtime and barrel o and t renders the same panel');
+  const migration = panel(emit, form, undefined, {}, savedEnv, savedEnv);
+  const migrationCheck = runner(form);
+  const legacyOptions = 'D3DMETAL_FRAMEWORK_PATH=/old FSR4_PROFILE=old ' +
+    'NOTPROTON_FORWARD_ENV=D3DMETAL_FRAMEWORK_PATH,FSR4_PROFILE %command% --example';
+  migration.render({ details: details(legacyOptions) });
+  await Promise.resolve();
+  migrationCheck.ok(migration.written.length === 1 &&
+    !migration.written[0].opts.includes('D3DMETAL_FRAMEWORK_PATH=') &&
+    !migration.written[0].opts.includes('FSR4_PROFILE=') &&
+    !migration.written[0].opts.includes('NOTPROTON_FORWARD_ENV=') &&
+    migration.written[0].opts.includes('%command% --example') && migration.envWritten.length === 1,
+    'legacy environment values migrate off launch options while preserving game arguments');
+  failed += migrationCheck.failed;
 
   failed += t.failed;
 }
 console.log(failed ? `\n${failed} failure(s)` : '\nboth shapes pass');
 process.exit(failed ? 1 : 0);
+})().catch(error => { console.error(error); process.exit(1); });

@@ -25,5 +25,6 @@ int np_compatsvc_routes(void);
 
 // Tells the page the mapping changed.
 void np_compatsvc_state_changed(void);
+void np_compatsvc_suppress_state_changed(int suppress);
 
 #endif // NOTPROTON_FEATS_COMPATSVC_H

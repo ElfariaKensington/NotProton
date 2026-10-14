@@ -26,19 +26,31 @@ const FORMS = {
 
 // `fallback` and `fexTools` stand in for what the hook sets before the transform.
 function panel(emit, form, globals = { document: { documentElement: { lang: 'en' } } },
-               { fallback = 'notproton', fexTools = [], names = ['R0', 'B0'] } = {}) {
+               { fallback = 'notproton', fexTools = [], names = ['R0', 'B0'] } = {}, initialEnv, initialApplied) {
   const raw = execFileSync(emit, [form, fallback, ...fexTools], { encoding: 'utf8' }).trim();
   const f = FORMS[form];
   const body = expand(raw, { [f.react]: names[0], [f.barrel]: names[1] });
   const src = form === 'component' ? 'var ' + body.replace(/,$/, '') : body.replace(/;$/, '');
   const written = [];
+  const envWritten = [];
+  const storage = new Map();
+  if (initialEnv !== undefined) storage.set('NotProton.Environment.287700', initialEnv);
+  if (initialApplied !== undefined) storage.set('NotProton.Environment.287700.applied', initialApplied);
+  global.localStorage = {
+    getItem: key => storage.has(key) ? storage.get(key) : null,
+    setItem: (key, value) => storage.set(key, String(value)),
+    removeItem: key => storage.delete(key),
+  };
   const SteamClient = {
-    Apps: { SetAppLaunchOptions: (appid, opts) => written.push({ appid, opts }) },
+    Apps: {
+      SetAppLaunchOptions: (appid, opts) => written.push({ appid, opts }),
+      SpecifyCompatTool: (appid, tool) => envWritten.push({ appid, tool }),
+    },
   };
   const build = new Function(names[0], names[1], 'SteamClient', 'globalThis',
     src + '\nreturn { MSCXOpts, MSCXPick: typeof MSCXPick === "function" ? MSCXPick : null };');
   const { MSCXOpts, MSCXPick } = build(react, barrel, SteamClient, globals);
-  return { render: MSCXOpts, pick: MSCXPick, written };
+  return { render: MSCXOpts, pick: MSCXPick, written, envWritten };
 }
 
 // Function components are resolved rather than recorded, so a check sees the nodes the

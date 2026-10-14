@@ -44,7 +44,7 @@ np_build="test"
 library="$np_support/runners/crossover-$np_build/CrossOver/lib64/apple_gptk/external/libd3dshared.dylib"
 init=$(sed -n '/^CX_ROOT=/,/^wine_unix=/p' "$SRC")
 # shellcheck disable=SC2016 # Match the literal launcher loop.
-forward=$(sed -n '/^for name in $(env /,/^done$/p' "$SRC")
+forward=$(sed -n '/^for name in $(/,/^done$/p' "$SRC")
 [ -n "$init" ] && [ -n "$forward" ] || { echo "FAIL: runner environment blocks not found"; exit 1; }
 unset CX_APPLEGPTK_LIBD3DSHARED_PATH
 eval "$init"
@@ -68,12 +68,42 @@ after_bad=$(env -i PATH="$PATH" LANG=en_US.UTF-8 DXVK_HUD=1 sh -c '
   f=$1; set --; eval "$f"; printf "%s " "$@"' sh "$forward")
 is "settings after a non-UTF-8 value are forwarded" "--env DXVK_HUD=1 " "$after_bad"
 
+echo "== custom per-game variables survive the launcher boundary =="
+compatdata="$work/compatdata/287700"
+mkdir -p "$compatdata"
+export STEAM_COMPAT_DATA_PATH="$compatdata"
+rm -f "$compatdata/notproton-environment"
+export NOTPROTON_FORWARD_ENV="D3DMETAL_FRAMEWORK_PATH,FSR4_HOOK_LOG,FSR4_ROOT,FSR4_REPLACE,FSR4_PANEL,FSR4_VERSION,FSR4_PROFILE"
+export D3DMETAL_FRAMEWORK_PATH=/tmp/D3DMetal.framework/Versions/A/D3DMetal
+export FSR4_HOOK_LOG=/tmp/hook.log
+export FSR4_ROOT="/tmp/fsr4 root"
+export FSR4_REPLACE=1 FSR4_PANEL=1 FSR4_VERSION=4.1.1 FSR4_PROFILE=lossy
+set --
+eval "$forward"
+forwarded_value() {
+  key="$1"
+  shift
+  for arg in "$@"; do
+    case "$arg" in
+      "$key"=*) printf '%s' "$arg" | sed 's/^[^=]*=//'; return ;;
+    esac
+  done
+}
+is "D3DMETAL_FRAMEWORK_PATH survives" "$D3DMETAL_FRAMEWORK_PATH" "$(forwarded_value D3DMETAL_FRAMEWORK_PATH "$@")"
+is "FSR4_HOOK_LOG survives" "$FSR4_HOOK_LOG" "$(forwarded_value FSR4_HOOK_LOG "$@")"
+is "FSR4_ROOT with spaces survives as one value" "$FSR4_ROOT" "$(forwarded_value FSR4_ROOT "$@")"
+is "FSR4_REPLACE survives" "$FSR4_REPLACE" "$(forwarded_value FSR4_REPLACE "$@")"
+is "FSR4_PANEL survives" "$FSR4_PANEL" "$(forwarded_value FSR4_PANEL "$@")"
+is "FSR4_VERSION survives" "$FSR4_VERSION" "$(forwarded_value FSR4_VERSION "$@")"
+is "FSR4_PROFILE survives" "$FSR4_PROFILE" "$(forwarded_value FSR4_PROFILE "$@")"
+is "internal forward marker is not exposed to the game" "" "$(forwarded_value NOTPROTON_FORWARD_ENV "$@")"
+
 echo "== Rosetta-only settings on arm64 Wine =="
 drop=$(sed -n '/^np_dropped=""$/,/^fi$/p' "$SRC")
 [ -n "$drop" ] || { echo "FAIL: the arm64 settings block was not found"; exit 1; }
 drop_at=$(grep -n '^np_dropped=""$' "$SRC" | cut -d: -f1)
 # shellcheck disable=SC2016 # Match the literal launcher loop.
-forward_at=$(grep -n '^for name in $(env ' "$SRC" | cut -d: -f1)
+forward_at=$(grep -n '^for name in $(' "$SRC" | cut -d: -f1)
 [ "$drop_at" -lt "$forward_at" ] ||
   bad "the arm64 settings block runs before the forwarding loop" "< $forward_at" "$drop_at"
 seen() { sh -c 'env | sed -nE "s/^(CX_GRAPHICS_BACKEND|D3DM_[A-Z0-9_]*|DXMT_[A-Z0-9_]*|ROSETTA_[A-Z0-9_]*)=.*/\1/p" | sort | tr "\n" " "'; }
