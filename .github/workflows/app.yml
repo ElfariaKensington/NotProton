@@ -31,6 +31,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # The self-hosted HomeRun runner may resolve macOS's older /usr/bin/python3.
+      # fontTools 4.66.x requires Python 3.11+, so select a known interpreter explicitly.
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+
       - name: Record the toolchain
         run: |
           if [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ inputs.runner }}" == "self-hosted" ]]; then
@@ -46,6 +53,9 @@ jobs:
           xcodebuild -version
           swift --version
           echo "macOS SDK $(xcrun --sdk macosx --show-sdk-version)"
+          command -v python3
+          python3 --version
+          python3 -m pip --version
 
       - name: Install cross compilers
         run: brew install mingw-w64 bison flex
@@ -108,7 +118,13 @@ jobs:
         run: |
           brew install fontforge gpatch
           python3 -m venv scratch/fontvenv
-          scratch/fontvenv/bin/pip install $FONT_TOOLS
+          # The venv inherits ensurepip's bundled pip; upgrade it before installing
+          # recent packages so dependency metadata and Python requirements are handled correctly.
+          scratch/fontvenv/bin/python -m pip install --upgrade pip
+          scratch/fontvenv/bin/python -m pip install $FONT_TOOLS
+          scratch/fontvenv/bin/python --version
+          scratch/fontvenv/bin/python -m pip --version
+          scratch/fontvenv/bin/python -m pip show fonttools afdko
           echo "$PWD/scratch/fontvenv/bin" >> "$GITHUB_PATH"
 
       - name: Build the fonts
