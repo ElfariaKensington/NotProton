@@ -44,7 +44,7 @@ np_build="test"
 library="$np_support/runners/crossover-$np_build/CrossOver/lib64/apple_gptk/external/libd3dshared.dylib"
 init=$(sed -n '/^CX_ROOT=/,/^wine_unix=/p' "$SRC")
 # shellcheck disable=SC2016 # Match the literal launcher loop.
-forward=$(sed -n '/^for name in $(env /,/^done$/p' "$SRC")
+forward=$(sed -n '/^for name in $(printf/,/^done$/p' "$SRC")
 [ -n "$init" ] && [ -n "$forward" ] || { echo "FAIL: runner environment blocks not found"; exit 1; }
 unset CX_APPLEGPTK_LIBD3DSHARED_PATH
 eval "$init"
@@ -61,6 +61,40 @@ for arg in "$@"; do
   case "$arg" in CX_APPLEGPTK_LIBD3DSHARED_PATH=*) forwarded=${arg#*=} ;; esac
 done
 is "game launcher receives the path as one argument" "$library" "$forwarded"
+
+echo "== per-game variables make it through the launcher filter =="
+env_load=$(sed -n '/^app_id="$STEAM_COMPAT_APP_ID"$/,/^unset np_game_env_file/p' "$SRC")
+[ -n "$env_load" ] || { echo "FAIL: per-game environment load block not found"; exit 1; }
+original_home="$HOME"
+HOME="$work/home"
+mkdir -p "$HOME/Library/Application Support/NotProton/game-env"
+STEAM_COMPAT_APP_ID=287700
+SteamAppId=0
+STEAM_COMPAT_DATA_PATH=/tmp/compatdata/287700
+verb=waitforexitandrun
+log="$work/game.log"
+printf '%s\\n' 'MY_ENV=hello world' 'CUSTOM_APP_SETTING=app value' > \
+  "$HOME/Library/Application Support/NotProton/game-env/287700.env"
+np_game_env_keys=""
+eval "$env_load"
+is "loads a per-game value with spaces" "hello world" "$MY_ENV"
+is "loads a second per-game value with spaces" "app value" "$CUSTOM_APP_SETTING"
+is "records custom variable names for the launcher" "MY_ENV CUSTOM_APP_SETTING" "$np_game_env_keys"
+set --
+eval "$forward"
+forwarded_my=""
+forwarded_custom=""
+for arg in "$@"; do
+  case "$arg" in
+    "MY_ENV=hello world") forwarded_my="$arg" ;;
+    "CUSTOM_APP_SETTING=app value") forwarded_custom="$arg" ;;
+  esac
+done
+is "forwards an arbitrary variable through --env" "MY_ENV=hello world" "$forwarded_my"
+is "forwards another arbitrary variable through --env" "CUSTOM_APP_SETTING=app value" "$forwarded_custom"
+HOME="$original_home"
+unset -v MY_ENV CUSTOM_APP_SETTING np_game_env_keys
+
 # macOS sed stops at the first invalid UTF-8 value.
 # shellcheck disable=SC2016 # The stub and loop expand inside the child shell.
 after_bad=$(env -i PATH="$PATH" LANG=en_US.UTF-8 DXVK_HUD=1 sh -c '

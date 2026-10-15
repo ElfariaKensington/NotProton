@@ -238,6 +238,7 @@ case "$app_id" in ''|*[!0-9]*) app_id=0 ;; esac
 
 # Per-game environment overrides are saved through the native Compatibility service,
 # completely separately from Steam launch options and game arguments.
+np_game_env_keys=""
 np_game_env_file="${HOME:-}/Library/Application Support/NotProton/game-env/${app_id}.env"
 if [ "$verb" = "waitforexitandrun" ] && [ -n "${HOME:-}" ] &&
    [ -f "$np_game_env_file" ] && [ ! -L "$np_game_env_file" ]; then
@@ -247,6 +248,10 @@ if [ "$verb" = "waitforexitandrun" ] && [ -n "${HOME:-}" ] &&
     np_game_env_value=${np_game_env_line#*=}
     case "$np_game_env_key" in ''|[!A-Za-z_]*|*[!A-Za-z0-9_]*) continue ;; esac
     export "$np_game_env_key=$np_game_env_value"
+    case " $np_game_env_keys " in
+      *" $np_game_env_key "*) ;;
+      *) np_game_env_keys="${np_game_env_keys}${np_game_env_keys:+ }$np_game_env_key" ;;
+    esac
   done < "$np_game_env_file"
 fi
 unset np_game_env_file np_game_env_line np_game_env_key np_game_env_value
@@ -1500,8 +1505,10 @@ else
   echo "=== client staged no overlay renderer, overlay disabled ===" >> "$log" 2>&1 || true
 fi
 set -- --args "$shim_exe" "$@"
-for name in $(env | LC_ALL=C sed -nE 's/^(CX_APPLEGPTK_LIBD3DSHARED_PATH|Steam[A-Za-z0-9]*|(CX_GRAPHICS|D3DM_|DXMT_|DXVK_|MTL_|ROSETTA_)[A-Z0-9_]*)=.*/\1/p'); do
-  eval "value=\$$name"
+for name in $(printf '%s\n' \
+    "$(env | LC_ALL=C sed -nE 's/^(CX_APPLEGPTK_LIBD3DSHARED_PATH|Steam[A-Za-z0-9]*|(CX_GRAPHICS|D3DM_|DXMT_|DXVK_|MTL_|ROSETTA_)[A-Z0-9_]*)=.*/\1/p')" \
+    "$np_game_env_keys" | tr ' ' '\n' | sed '/^$/d' | LC_ALL=C sort -u); do
+  eval "value=\$name"
   # shellcheck disable=SC2154 # eval assigns value on the line above
   set -- --env "$name=$value" "$@"
 done
