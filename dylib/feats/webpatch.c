@@ -261,16 +261,16 @@ static int out_expand(np_out_t *o, const char *replace, const np_cap_t *caps) {
     "envDraftKey=envStore+\"_draft\",envAppliedKey=envStore+\"_applied\"," \
     "envRead=k=>{try{return globalThis.localStorage?.getItem(k)}catch(e){return null}}," \
     "envSaved=envRead(envDraftKey),envDraft=envSaved===null?(envRead(envAppliedKey)||\"\"):envSaved," \
-    "envStatus=null," \
+    "envStatus={current:null}," \
     "envParse=raw=>{const m=new Map;for(const line of raw.split(/\\r?\\n/)){const x=line.trim();if(!x||x[0]===\"#\")continue;" \
     "const i=line.indexOf(\"=\");if(i<1)continue;const k=line.slice(0,i).trim(),v=line.slice(i+1);" \
     "if(/^[A-Za-z_][A-Za-z0-9_]*$/.test(k))m.set(k,v)}return m}," \
     "envEdit=e=>{try{globalThis.localStorage?.setItem(envDraftKey,e.target.value)}catch(err){}}, " \
     "envWrite=payload=>{try{Promise.resolve(SteamClient.CompatManager.SpecifyCompatTool(t.unAppID,\"NOTPROTON_ENV_B64:\"+payload)).then(()=>{" \
-    "if(envStatus)envStatus.textContent=npL(\"Saved separately for this game. Restart it to apply changes.\",\"已单独保存此游戏的环境变量；重启游戏后生效。\")}).catch(err=>{" \
-    "if(envStatus)envStatus.textContent=npL(\"Could not save environment variables in this Steam UI.\",\"此 Steam 界面无法保存环境变量。\");" \
+    "if(envStatus.current)envStatus.current.textContent=npL(\"Saved separately for this game. Restart it to apply changes.\",\"已单独保存此游戏的环境变量；重启游戏后生效。\")}).catch(err=>{" \
+    "if(envStatus.current)envStatus.current.textContent=npL(\"Could not save environment variables in this Steam UI.\",\"此 Steam 界面无法保存环境变量。\");" \
     "console.error(\"NotProton: per-game environment save failed\",err)})}catch(err){" \
-    "if(envStatus)envStatus.textContent=npL(\"Saving requires the Steam Compatibility service.\",\"保存环境变量需要 Steam 兼容性服务。\");" \
+    "if(envStatus.current)envStatus.current.textContent=npL(\"Saving requires the Steam Compatibility service.\",\"保存环境变量需要 Steam 兼容性服务。\");" \
     "console.error(\"NotProton: Compatibility service unavailable\",err)}}, " \
     "envApply=e=>{const raw=e.target.value,entries=[...envParse(raw)],payload=entries.map(([k,v])=>k+\"=\"+v).join(\"\\n\")," \
     "token=payload?btoa(unescape(encodeURIComponent(payload))):\"\";" \
@@ -331,7 +331,7 @@ static int out_expand(np_out_t *o, const char *replace, const np_cap_t *caps) {
     "(0," RT ".jsx)(\"textarea\",{className:\"MSCXEnvField\",rows:6,defaultValue:envDraft," \
     "placeholder:\"FOO=bar\\nDXMT_CONFIG=d3d11.example=1\",spellCheck:false," \
     "onChange:envEdit,onBlur:envApply,\"aria-label\":npL(\"Per-game environment variables\",\"每个游戏的环境变量\")})," \
-    "(0," RT ".jsx)(\"div\",{className:\"MSCXEnvHint\",ref:e=>envStatus=e,\"aria-live\":\"polite\",children:npL(" \
+    "(0," RT ".jsx)(\"div\",{className:\"MSCXEnvHint\",ref:e=>envStatus.current=e,\"aria-live\":\"polite\",children:npL(" \
     "\"One KEY=VALUE per line. Blank lines and # comments are ignored. Changes apply on blur; restart the game to use them.\"," \
     "\"每行一个 KEY=VALUE；忽略空行和 # 注释。离开输入框时应用更改；重启游戏后生效。\")})" \
     "]},\"env\")" \
