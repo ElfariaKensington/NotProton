@@ -42,13 +42,20 @@ function panel(emit, form, globals = { document: { documentElement: { lang: 'en'
   const body = expand(raw, { [f.react]: names[0], [f.barrel]: names[1] });
   const src = form === 'component' ? 'var ' + body.replace(/,$/, '') : body.replace(/;$/, '');
   const written = [];
+  const envWrites = [];
   const SteamClient = {
     Apps: { SetAppLaunchOptions: (appid, opts) => written.push({ appid, opts }) },
+    CompatManager: {
+      SpecifyCompatTool: (appid, tool) => {
+        envWrites.push({ appid, tool });
+        return Promise.resolve({ result: 1 });
+      },
+    },
   };
   const build = new Function(names[0], names[1], 'SteamClient', 'globalThis',
     src + '\nreturn { MSCXOpts, MSCXPick: typeof MSCXPick === "function" ? MSCXPick : null };');
   const { MSCXOpts, MSCXPick } = build(react, barrel, SteamClient, globals);
-  return { render: MSCXOpts, pick: MSCXPick, written, storage };
+  return { render: MSCXOpts, pick: MSCXPick, written, envWrites, storage };
 }
 
 // Function components are resolved rather than recorded, so a check sees the nodes the

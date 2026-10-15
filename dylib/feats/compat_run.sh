@@ -236,23 +236,20 @@ case "$app_id" in ''|0) app_id="$SteamAppId" ;; esac
 case "$app_id" in ''|0) app_id=$(basename "$STEAM_COMPAT_DATA_PATH" 2>/dev/null) ;; esac
 case "$app_id" in ''|*[!0-9]*) app_id=0 ;; esac
 
-# The Compatibility textbox is stored per game; Steam's launch string carries its
-# encoded values in one private assignment, which is restored before Wine starts.
-np_game_env_b64="${NOTPROTON_GAME_ENV_B64:-}"
-unset NOTPROTON_GAME_ENV_B64
-if [ "$verb" = "waitforexitandrun" ] && [ -n "$np_game_env_b64" ]; then
-  np_game_env_data=$(printf '%s' "$np_game_env_b64" | /usr/bin/base64 -D 2>/dev/null) || np_game_env_data=""
+# Per-game environment overrides are saved through the native Compatibility service,
+# completely separately from Steam launch options and game arguments.
+np_game_env_file="${HOME:-}/Library/Application Support/NotProton/game-env/${app_id}.env"
+if [ "$verb" = "waitforexitandrun" ] && [ -n "${HOME:-}" ] &&
+   [ -f "$np_game_env_file" ] && [ ! -L "$np_game_env_file" ]; then
   while IFS= read -r np_game_env_line || [ -n "$np_game_env_line" ]; do
     case "$np_game_env_line" in *=*) ;; *) continue ;; esac
     np_game_env_key=${np_game_env_line%%=*}
     np_game_env_value=${np_game_env_line#*=}
     case "$np_game_env_key" in ''|[!A-Za-z_]*|*[!A-Za-z0-9_]*) continue ;; esac
     export "$np_game_env_key=$np_game_env_value"
-  done <<EOF
-$np_game_env_data
-EOF
+  done < "$np_game_env_file"
 fi
-unset np_game_env_b64 np_game_env_data np_game_env_line np_game_env_key np_game_env_value
+unset np_game_env_file np_game_env_line np_game_env_key np_game_env_value
 echo "app_id=$app_id (STEAM_COMPAT_APP_ID=$STEAM_COMPAT_APP_ID)" >> "$log" 2>&1 || true
 
 # Steam does not set SteamAppId or SteamGameId for helpers like the install-script
