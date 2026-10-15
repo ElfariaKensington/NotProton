@@ -372,8 +372,6 @@ static int out_expand(np_out_t *o, const char *replace, const np_cap_t *caps) {
     "led\",e)}})()"
 
 #define NP_LAUNCH_MIGRATION \
-    NP_ENV_CARRIER_BRIDGE \
-    "," \
     "(async()=>{try{" \
     "const K=\"NotProtonLaunchMigrated_\"+this.m_cm.steamid.GetAccountID();" \
     "if(localStorage.getItem(K))return;" \
@@ -491,8 +489,8 @@ static const np_gate_t g_fixes[] = {
       "(\"#Settings_SteamPlay_DefaultTool\"),rgOptions:" NP_C6 ",disabled:0==" NP_C6 ".length,"
       "selectedOption:" NP_C1 "||\"" NP_FALLBACK_TOOL "\",",
       1 },
-    { "this.m_bServicesInitialized=!0,SteamClient.UI.NotifyAppInitialized()",
-      "this.m_bServicesInitialized=!0," NP_LAUNCH_MIGRATION ",SteamClient.UI.NotifyAppInitialized()", 1 },
+    { "this.m_bServicesInitialized=!0,SteamClient.UI.NotifyAppInitialized()", 
+      "this.m_bServicesInitialized=!0," NP_ENV_CARRIER_BRIDGE "," NP_LAUNCH_MIGRATION ",SteamClient.UI.NotifyAppInitialized()", 1 },
 };
 #define NP_FIX_COUNT (sizeof(g_fixes) / sizeof(g_fixes[0]))
 
