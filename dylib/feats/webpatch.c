@@ -257,25 +257,18 @@ static int out_expand(np_out_t *o, const char *replace, const np_cap_t *caps) {
     "fex=" NP_FEX_TOOLS ".indexOf(t.strCompatToolName||\"" NP_FALLBACK_TOOL "\")>=0," \
     "npZh=" NP_WEB_IS_ZH ",npL=(en,zh)=>npZh?zh:en," \
     "L=MSCXLaunch(o,t.unAppID),g=L.g,s=L.s," \
-    "envStore=\"NotProtonGameEnv_\"+t.unAppID," \
+    "envKey=\"NOTPROTON_GAME_ENV_B64\",envStore=\"NotProtonGameEnv_\"+t.unAppID," \
     "envDraftKey=envStore+\"_draft\",envAppliedKey=envStore+\"_applied\"," \
     "envRead=k=>{try{return globalThis.localStorage?.getItem(k)}catch(e){return null}}," \
     "envSaved=envRead(envDraftKey),envDraft=envSaved===null?(envRead(envAppliedKey)||\"\"):envSaved," \
-    "envStatus={current:null}," \
-    "envParse=raw=>{const m=new Map;for(const line of raw.split(/\\r?\\n/)){const x=line.trim();if(!x||x[0]===\"#\")continue;" \
-    "const i=line.indexOf(\"=\");if(i<1)continue;const k=line.slice(0,i).trim(),v=line.slice(i+1);" \
-    "if(/^[A-Za-z_][A-Za-z0-9_]*$/.test(k))m.set(k,v)}return m}," \
+    "envParse=raw=>{const m=new Map;for(const line of raw.split(/\\r?\\n/)){const x=line.trim();" \
+    "if(!x||x[0]===\"#\")continue;const i=line.indexOf(\"=\");if(i<1)continue;" \
+    "const k=line.slice(0,i).trim(),v=line.slice(i+1);if(/^[A-Za-z_][A-Za-z0-9_]*$/.test(k))m.set(k,v)}return m}," \
     "envEdit=e=>{try{globalThis.localStorage?.setItem(envDraftKey,e.target.value)}catch(err){}}, " \
-    "envWrite=payload=>{try{Promise.resolve(SteamClient.CompatManager.SpecifyCompatTool(t.unAppID,\"NOTPROTON_ENV_B64:\"+payload)).then(()=>{" \
-    "if(envStatus.current)envStatus.current.textContent=npL(\"Saved separately for this game. Restart it to apply changes.\",\"已单独保存此游戏的环境变量；重启游戏后生效。\")}).catch(err=>{" \
-    "if(envStatus.current)envStatus.current.textContent=npL(\"Could not save environment variables in this Steam UI.\",\"此 Steam 界面无法保存环境变量。\");" \
-    "console.error(\"NotProton: per-game environment save failed\",err)})}catch(err){" \
-    "if(envStatus.current)envStatus.current.textContent=npL(\"Saving requires the Steam Compatibility service.\",\"保存环境变量需要 Steam 兼容性服务。\");" \
-    "console.error(\"NotProton: Compatibility service unavailable\",err)}}, " \
     "envApply=e=>{const raw=e.target.value,entries=[...envParse(raw)],payload=entries.map(([k,v])=>k+\"=\"+v).join(\"\\n\")," \
-    "token=payload?btoa(unescape(encodeURIComponent(payload))):\"\";" \
+    "token=payload?btoa(unescape(encodeURIComponent(payload))):null;" \
     "try{globalThis.localStorage?.setItem(envDraftKey,raw);globalThis.localStorage?.setItem(envAppliedKey,raw)}catch(err){}" \
-    "envWrite(token)}, " \
+    "s([[envKey,token]])}, " \
     "T=(ks,l,on,off)=>(0," RT ".jsx)(" BARREL ".Yh,{className:\"MSCXRow\",label:l," \
     "checked:g(ks[0])===on," \
     "onChange:v=>s(ks.map(k=>[k,v?on:(off||null)]))},ks[0])," \
@@ -331,7 +324,7 @@ static int out_expand(np_out_t *o, const char *replace, const np_cap_t *caps) {
     "(0," RT ".jsx)(\"textarea\",{className:\"MSCXEnvField\",rows:6,defaultValue:envDraft," \
     "placeholder:\"FOO=bar\\nDXMT_CONFIG=d3d11.example=1\",spellCheck:false," \
     "onChange:envEdit,onBlur:envApply,\"aria-label\":npL(\"Per-game environment variables\",\"每个游戏的环境变量\")})," \
-    "(0," RT ".jsx)(\"div\",{className:\"MSCXEnvHint\",ref:e=>envStatus.current=e,\"aria-live\":\"polite\",children:npL(" \
+    "(0," RT ".jsx)(\"div\",{className:\"MSCXEnvHint\",children:npL(" \
     "\"One KEY=VALUE per line. Blank lines and # comments are ignored. Changes apply on blur; restart the game to use them.\"," \
     "\"每行一个 KEY=VALUE；忽略空行和 # 注释。离开输入框时应用更改；重启游戏后生效。\")})" \
     "]},\"env\")" \
@@ -360,7 +353,27 @@ static int out_expand(np_out_t *o, const char *replace, const np_cap_t *caps) {
     "return/[\"'\\\\]/.test(x)||/^[\\w.,:=\\/+@%-]*$/.test(v)?x:x.slice(0,i+1)+\"'\"+v+\"'\"})" \
     ".concat(\"%command%\",w.filter(x=>!k(x))).join(\" \")}"
 
+#define NP_ENV_CARRIER_BRIDGE \
+    "(()=>{try{const C=\"NOTPROTON_GAME_ENV_B64\",K=id=>\"NotProtonGameEnv_\"+id+\"_applied\";const clean=s=>String(s||\"\").replace(new RegExp(\"(^|\\\\s)\"" \
+    "+C+\"=[A-Za-z0-9+/=]+(?=\\\\s|$)\",\"g\"),\"$1\").trim();const payload=raw=>{const m=new Map;for(const line of String(raw||\"\").split(/\\\\r?\\\\n/)){con" \
+    "st x=line.trim();if(!x||x[0]===\"#\")continue;const i=line.indexOf(\"=\");if(i<1)continue;const k=line.slice(0,i).trim(),v=line.slice(i+1);if(/^" \
+    "[A-Za-z_][A-Za-z0-9_]*$/.test(k))m.set(k,v)}return [...m].map(([k,v])=>k+\"=\"+v).join(\"\\\\n\")};const encode=raw=>{const p=payload(raw);return " \
+    "p?btoa(unescape(encodeURIComponent(p))):\"\"};const apps=globalThis.SteamClient?.Apps;if(apps?.SetAppLaunchOptions&&!apps.SetAppLaunchOptions." \
+    "__npEnvCarrier){const original=apps.SetAppLaunchOptions;const wrapped=function(id,o){let raw=null;try{raw=localStorage.getItem(K(id))}catch(" \
+    "e){}const old=/NOTPROTON_GAME_ENV_B64=([A-Za-z0-9+/=]+)/.exec(String(o||\"\"));const token=raw===null?(old?old[1]:\"\"):encode(raw);let s=clean(" \
+    "o);if(token){if(/%command%/i.test(s))s=s.replace(/%command%/i,C+\"=\"+token+\" %command%\");else s=C+\"=\"+token+\" %command%\"+(s?\" \"+s:\"\")}return " \
+    "original.call(this,id,s)};wrapped.__npEnvCarrier=true;try{apps.SetAppLaunchOptions=wrapped}catch(e){}}const hide=t=>{if(!t||typeof t!==\"obje" \
+    "ct\")return t;try{if(Object.getOwnPropertyDescriptor(t,\"strLaunchOptions\")?.get?.__npEnvDisplay)return t;let raw=String(t.strLaunchOptions||\"" \
+    "\");const get=()=>clean(raw);get.__npEnvDisplay=true;Object.defineProperty(t,\"strLaunchOptions\",{configurable:true,enumerable:true,get,set(v)" \
+    "{raw=String(v||\"\")}})}catch(e){}return t};const ds=window.appDetailsStore;if(ds&&typeof ds.RequestAppDetails===\"function\"&&!ds.RequestAppDet" \
+    "ails.__npEnvDisplay){const original=ds.RequestAppDetails;const wrapped=function(...args){return Promise.resolve(original.apply(this,args)).t" \
+    "hen(hide)};wrapped.__npEnvDisplay=true;try{ds.RequestAppDetails=wrapped}catch(e){}}for(const name of [\"m_mapAppDetails\",\"m_mapDetails\",\"m_ma" \
+    "pApps\"]){const m=ds?.[name];if(m?.values)for(const t of m.values())hide(t)}}catch(e){console.warn(\"NotProton: launch-options display filter " \
+    "failed\",e)}})()"
+
 #define NP_LAUNCH_MIGRATION \
+    NP_ENV_CARRIER_BRIDGE \
+    "," \
     "(async()=>{try{" \
     "const K=\"NotProtonLaunchMigrated_\"+this.m_cm.steamid.GetAccountID();" \
     "if(localStorage.getItem(K))return;" \

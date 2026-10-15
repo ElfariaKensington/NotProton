@@ -133,46 +133,34 @@ for (const form of Object.keys(FORMS)) {
        'adds a multiline environment field at the bottom of Compatibility');
   t.ok(initialEnvField.props.defaultValue === '',
        'starts with no per-game environment overrides');
-  const customEnvText = 'MY_ENV=hello world\nEMPTY=\nNOT VALID\n# ignored';
+  const customEnvText = 'MY_ENV=hello world\\nEMPTY=\\nNOT VALID\\n# ignored';
   written.length = 0;
-  envWrites.length = 0;
   initialEnvField.props.onChange({ target: { value: customEnvText } });
-  t.ok(written.length === 0 && envWrites.length === 0 &&
-       storage.get(envStoreKey + '_draft') === customEnvText,
+  t.ok(written.length === 0 && storage.get(envStoreKey + '_draft') === customEnvText,
        'typing changes only the separate draft');
   initialEnvField.props.onBlur({ target: { value: customEnvText } });
-  const routeCall = envWrites[0];
-  const routePrefix = 'NOTPROTON_ENV_B64:';
-  const encoded = routeCall && routeCall.tool.startsWith(routePrefix)
-    ? routeCall.tool.slice(routePrefix.length) : null;
-  const decodedEnv = encoded === null ? '' : Buffer.from(encoded, 'base64').toString('utf8');
-  t.ok(written.length === 0 && routeCall && routeCall.appid === 287700 &&
-       decodedEnv === 'MY_ENV=hello world\nEMPTY=',
-       'applies valid KEY=VALUE entries through the separate native per-game settings route');
-  t.ok(written.length === 0,
-       'environment changes never write or append anything to Steam Launch Options');
+  let carrier = /(?:^|\\s)NOTPROTON_GAME_ENV_B64=([A-Za-z0-9+/=]+)/.exec(last());
+  let decoded = carrier ? Buffer.from(carrier[1], 'base64').toString('utf8') : '';
+  t.ok(written.length === 1 && carrier && decoded === 'MY_ENV=hello world\\nEMPTY=',
+       'applies valid KEY=VALUE entries through the launch carrier');
   t.ok(storage.get(envStoreKey + '_applied') === customEnvText,
        'remembers the applied values per game');
   const otherEnv = walk(P({ details: details('%command%', { unAppID: 987654 }) }))
     .find(x => x.type === 'textarea' && x.props.className === 'MSCXEnvField');
   t.ok(otherEnv && otherEnv.props.defaultValue === '',
        'does not leak one game’s environment to another game');
-
-  const reducedEnv = 'EMPTY=';
-  const reduceField = envField(envOriginalOptions);
-  reduceField.props.onChange({ target: { value: reducedEnv } });
-  reduceField.props.onBlur({ target: { value: reducedEnv } });
-  const reduced = envWrites[envWrites.length - 1];
-  t.ok(reduced && reduced.appid === 287700 &&
-       Buffer.from(reduced.tool.slice(routePrefix.length), 'base64').toString('utf8') === 'EMPTY=',
-       'updates values and supports intentionally empty environment variables');
-  const clearField = envField(envOriginalOptions);
-  clearField.props.onChange({ target: { value: '' } });
-  clearField.props.onBlur({ target: { value: '' } });
-  const cleared = envWrites[envWrites.length - 1];
-  t.ok(cleared && cleared.appid === 287700 &&
-       cleared.tool === routePrefix && written.length === 0,
-       'clearing overrides deletes the per-game file without changing Launch Options');
+  const reduced = envField(last());
+  reduced.props.onChange({ target: { value: 'EMPTY=' } });
+  reduced.props.onBlur({ target: { value: 'EMPTY=' } });
+  carrier = /(?:^|\\s)NOTPROTON_GAME_ENV_B64=([A-Za-z0-9+/=]+)/.exec(last());
+  decoded = carrier ? Buffer.from(carrier[1], 'base64').toString('utf8') : '';
+  t.ok(carrier && decoded === 'EMPTY=', 'updates values and supports intentionally empty variables');
+  const cleared = envField(last());
+  cleared.props.onChange({ target: { value: '' } });
+  cleared.props.onBlur({ target: { value: '' } });
+  t.ok(!/\\bNOTPROTON_GAME_ENV_B64=/.test(last()) &&
+       last().includes('%command% --title "two words"'),
+       'clearing overrides removes the carrier and keeps launch arguments');
 
   failed += t.failed;
 }
