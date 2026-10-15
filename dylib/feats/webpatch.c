@@ -355,21 +355,21 @@ static int out_expand(np_out_t *o, const char *replace, const np_cap_t *caps) {
 
 #define NP_ENV_CARRIER_BRIDGE \
     "(()=>{try{const C=\"NOTPROTON_GAME_ENV_B64\",K=id=>\"NotProtonGameEnv_\"+id+\"_applied\";const clean=s=>String(s||\"\").replace(new RegExp(\"(^|\\\\s)\"" \
-    "+C+\"=[A-Za-z0-9+/=]+(?=\\\\s|$)\",\"g\"),\"$1\").trim();const payload=raw=>{const m=new Map;for(const line of String(raw||\"\").split(/\\\\r?\\\\n/)){con" \
-    "st x=line.trim();if(!x||x[0]===\"#\")continue;const i=line.indexOf(\"=\");if(i<1)continue;const k=line.slice(0,i).trim(),v=line.slice(i+1);if(/^" \
-    "[A-Za-z_][A-Za-z0-9_]*$/.test(k))m.set(k,v)}return [...m].map(([k,v])=>k+\"=\"+v).join(\"\\\\n\")};const encode=raw=>{const p=payload(raw);return " \
-    "p?btoa(unescape(encodeURIComponent(p))):\"\"};const apps=globalThis.SteamClient?.Apps;if(apps?.SetAppLaunchOptions&&!apps.SetAppLaunchOptions." \
-    "__npEnvCarrier){const original=apps.SetAppLaunchOptions;const wrapped=function(id,o){let raw=null;try{raw=localStorage.getItem(K(id))}catch(" \
-    "e){}const old=/NOTPROTON_GAME_ENV_B64=([A-Za-z0-9+/=]+)/.exec(String(o||\"\"));const token=raw===null?(old?old[1]:\"\"):encode(raw);let s=clean(" \
-    "o);if(token){if(/%command%/i.test(s))s=s.replace(/%command%/i,C+\"=\"+token+\" %command%\");else s=C+\"=\"+token+\" %command%\"+(s?\" \"+s:\"\")}return " \
-    "original.call(this,id,s)};wrapped.__npEnvCarrier=true;try{apps.SetAppLaunchOptions=wrapped}catch(e){}}const hide=t=>{if(!t||typeof t!==\"obje" \
-    "ct\")return t;try{if(Object.getOwnPropertyDescriptor(t,\"strLaunchOptions\")?.get?.__npEnvDisplay)return t;let raw=String(t.strLaunchOptions||\"" \
-    "\");const get=()=>clean(raw);get.__npEnvDisplay=true;Object.defineProperty(t,\"strLaunchOptions\",{configurable:true,enumerable:true,get,set(v)" \
-    "{raw=String(v||\"\")}})}catch(e){}return t};const ds=window.appDetailsStore;if(ds&&typeof ds.RequestAppDetails===\"function\"&&!ds.RequestAppDet" \
-    "ails.__npEnvDisplay){const original=ds.RequestAppDetails;const wrapped=function(...args){return Promise.resolve(original.apply(this,args)).t" \
-    "hen(hide)};wrapped.__npEnvDisplay=true;try{ds.RequestAppDetails=wrapped}catch(e){}}for(const name of [\"m_mapAppDetails\",\"m_mapDetails\",\"m_ma" \
-    "pApps\"]){const m=ds?.[name];if(m?.values)for(const t of m.values())hide(t)}}catch(e){console.warn(\"NotProton: launch-options display filter " \
-    "failed\",e)}})()"
+    "+C+\"=[A-Za-z0-9+/=]+(?=\\\\s|$)\",\"g\"),\"$1\").trim();const payload=raw=>{const m=new Map;for(const line of String(raw||\"\").split(/\\r?\\n/)){const" \
+    " x=line.trim();if(!x||x[0]===\"#\")continue;const i=line.indexOf(\"=\");if(i<1)continue;const k=line.slice(0,i).trim(),v=line.slice(i+1);if(/^[A" \
+    "-Za-z_][A-Za-z0-9_]*$/.test(k))m.set(k,v)}return [...m].map(([k,v])=>k+\"=\"+v).join(\"\\n\")};const encode=raw=>{const p=payload(raw);return p?b" \
+    "toa(unescape(encodeURIComponent(p))):\"\"};const apps=globalThis.SteamClient?.Apps;if(apps?.SetAppLaunchOptions&&!apps.SetAppLaunchOptions.__n" \
+    "pEnvCarrier){const original=apps.SetAppLaunchOptions;const wrapped=function(id,o){let raw=null;try{raw=localStorage.getItem(K(id))}catch(e){" \
+    "}const old=/NOTPROTON_GAME_ENV_B64=([A-Za-z0-9+/=]+)/.exec(String(o||\"\"));const token=raw===null?(old?old[1]:\"\"):encode(raw);let s=clean(o);" \
+    "if(token){if(/%command%/i.test(s))s=s.replace(/%command%/i,C+\"=\"+token+\" %command%\");else s=C+\"=\"+token+\" %command%\"+(s?\" \"+s:\"\")}return ori" \
+    "ginal.call(this,id,s)};wrapped.__npEnvCarrier=true;try{apps.SetAppLaunchOptions=wrapped}catch(e){}}const hide=t=>{if(!t||typeof t!==\"object\"" \
+    ")return t;try{if(Object.getOwnPropertyDescriptor(t,\"strLaunchOptions\")?.get?.__npEnvDisplay)return t;let raw=String(t.strLaunchOptions||\"\");" \
+    "const get=()=>clean(raw);get.__npEnvDisplay=true;Object.defineProperty(t,\"strLaunchOptions\",{configurable:true,enumerable:true,get,set(v){ra" \
+    "w=String(v||\"\")}})}catch(e){}return t};const ds=window.appDetailsStore;if(ds&&typeof ds.RequestAppDetails===\"function\"&&!ds.RequestAppDetail" \
+    "s.__npEnvDisplay){const original=ds.RequestAppDetails;const wrapped=function(...args){return Promise.resolve(original.apply(this,args)).then" \
+    "(hide)};wrapped.__npEnvDisplay=true;try{ds.RequestAppDetails=wrapped}catch(e){}}for(const name of [\"m_mapAppDetails\",\"m_mapDetails\",\"m_mapAp" \
+    "ps\"]){const m=ds?.[name];if(m?.values)for(const t of m.values())hide(t)}}catch(e){console.warn(\"NotProton: launch-options display filter fai" \
+    "led\",e)}})()"
 
 #define NP_LAUNCH_MIGRATION \
     NP_ENV_CARRIER_BRIDGE \

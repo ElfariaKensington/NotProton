@@ -1505,10 +1505,10 @@ else
   echo "=== client staged no overlay renderer, overlay disabled ===" >> "$log" 2>&1 || true
 fi
 set -- --args "$shim_exe" "$@"
-for name in $(printf '%s\\n' \
-    "$(env | LC_ALL=C sed -nE 's/^(CX_APPLEGPTK_LIBD3DSHARED_PATH|Steam[A-Za-z0-9]*|(CX_GRAPHICS|D3DM_|DXMT_|DXVK_|MTL_|ROSETTA_)[A-Z0-9_]*)=.*/\\1/p')" \
-    "$np_game_env_keys" | tr ' ' '\\n' | sed '/^$/d' | LC_ALL=C sort -u); do
-  eval "value=\\$$name"
+for name in $(printf '%s\n' \
+    "$(env | LC_ALL=C sed -nE 's/^(CX_APPLEGPTK_LIBD3DSHARED_PATH|Steam[A-Za-z0-9]*|(CX_GRAPHICS|D3DM_|DXMT_|DXVK_|MTL_|ROSETTA_)[A-Z0-9_]*)=.*/\1/p')" \
+    "$np_game_env_keys" | tr ' ' '\n' | sed '/^$/d' | LC_ALL=C sort -u); do
+  eval "value=\$$name"
   # shellcheck disable=SC2154 # eval assigns value on the line above
   set -- --env "$name=$value" "$@"
 done

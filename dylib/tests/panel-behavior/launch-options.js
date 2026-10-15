@@ -133,15 +133,15 @@ for (const form of Object.keys(FORMS)) {
        'adds a multiline environment field at the bottom of Compatibility');
   t.ok(initialEnvField.props.defaultValue === '',
        'starts with no per-game environment overrides');
-  const customEnvText = 'MY_ENV=hello world\\nEMPTY=\\nNOT VALID\\n# ignored';
+  const customEnvText = 'MY_ENV=hello world\nEMPTY=\nNOT VALID\n# ignored';
   written.length = 0;
   initialEnvField.props.onChange({ target: { value: customEnvText } });
   t.ok(written.length === 0 && storage.get(envStoreKey + '_draft') === customEnvText,
        'typing changes only the separate draft');
   initialEnvField.props.onBlur({ target: { value: customEnvText } });
-  let carrier = /(?:^|\\s)NOTPROTON_GAME_ENV_B64=([A-Za-z0-9+/=]+)/.exec(last());
+  let carrier = /(?:^|\s)NOTPROTON_GAME_ENV_B64=([A-Za-z0-9+/=]+)/.exec(last());
   let decoded = carrier ? Buffer.from(carrier[1], 'base64').toString('utf8') : '';
-  t.ok(written.length === 1 && carrier && decoded === 'MY_ENV=hello world\\nEMPTY=',
+  t.ok(written.length === 1 && carrier && decoded === 'MY_ENV=hello world\nEMPTY=',
        'applies valid KEY=VALUE entries through the launch carrier');
   t.ok(storage.get(envStoreKey + '_applied') === customEnvText,
        'remembers the applied values per game');
@@ -152,13 +152,13 @@ for (const form of Object.keys(FORMS)) {
   const reduced = envField(last());
   reduced.props.onChange({ target: { value: 'EMPTY=' } });
   reduced.props.onBlur({ target: { value: 'EMPTY=' } });
-  carrier = /(?:^|\\s)NOTPROTON_GAME_ENV_B64=([A-Za-z0-9+/=]+)/.exec(last());
+  carrier = /(?:^|\s)NOTPROTON_GAME_ENV_B64=([A-Za-z0-9+/=]+)/.exec(last());
   decoded = carrier ? Buffer.from(carrier[1], 'base64').toString('utf8') : '';
   t.ok(carrier && decoded === 'EMPTY=', 'updates values and supports intentionally empty variables');
   const cleared = envField(last());
   cleared.props.onChange({ target: { value: '' } });
   cleared.props.onBlur({ target: { value: '' } });
-  t.ok(!/\\bNOTPROTON_GAME_ENV_B64=/.test(last()) &&
+  t.ok(!/\bNOTPROTON_GAME_ENV_B64=/.test(last()) &&
        last().includes('%command% --title "two words"'),
        'clearing overrides removes the carrier and keeps launch arguments');
 
