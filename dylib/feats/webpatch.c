@@ -348,7 +348,7 @@ static int out_expand(np_out_t *o, const char *replace, const np_cap_t *caps) {
     ".concat(\"\"===v.data||\"dxmt\"===v.data?[]:" \
     "[[\"DXMT_METALFX_SPATIAL_SWAPCHAIN\",null],[\"DXMT_CONFIG\",fx(\"\")||null]])" \
     ".concat(\"dxmt\"===v.data?[]:[[\"DXMT_ENABLE_NVEXT\",null]]))})," \
-    "T([\"MTL_HUD_ENABLED\"],npL(\"Metal HUD\",\"Metal 性能监视器\"),\"1\")," \
+    "T([\"MTL_HUD_ENABLED\"],npL(\"Metal HUD\",\"Metal 性能监视器\",\"Metal HUD\"),\"1\")," \
     "dm&&T([\"D3DM_ENABLE_METALFX\"],\"DLSS\",\"1\")," \
     "\"dxmt\"===b&&T([\"DXMT_ENABLE_NVEXT\"],\"DLSS\",\"1\")," \
     "!fex&&T([\"ROSETTA_ADVERTISE_AVX\"],npL(\"Advertise AVX2 to Rosetta\",\"向 Rosetta 声明 AVX2 支持\",\"Segnala AVX2 a Rosetta\"),\"1\",\"0\")," \
@@ -361,10 +361,12 @@ static int out_expand(np_out_t *o, const char *replace, const np_cap_t *caps) {
     "children:(0," RT ".jsx)(" BARREL ".m,{rgOptions:U," \
     "selectedOption:sw?(U.find(u=>u.data&&+u.data===fn)||{data:String(fn)}).data:\"\"," \
     "onChange:v=>s([[\"DXMT_METALFX_SPATIAL_SWAPCHAIN\",v.data?\"1\":null],[\"DXMT_CONFIG\",fx(v.data)||null]])})},\"usf\")," \
-    "(0," RT ".jsx)(" BARREL ".XY,{label:npL(\"Controllers (May break Steam Input. Not recommended)\"," \
-    "\"控制器（可能导致 Steam Input 失效，不推荐）\"),children:" \
-    "T([\"NOTPROTON_RAW_CONTROLLERS\"],npL(\"Let games read controllers directly\"," \
-    "\"允许游戏直接读取控制器\"),\"1\",\"\")},\"ctl\")," \
+    "(0," RT ".jsxs)(" BARREL ".XY,{label:npL(\"Controllers\",\"控制器\",\"Controller\"),children:[" \
+    "T([\"NOTPROTON_RAW_CONTROLLERS\"],npL(\"Let games read controllers directly (May break Steam Input. Not recommended)\"," \
+    "\"允许游戏直接读取控制器（可能导致 Steam Input 失效，不推荐）\"," \
+    "\"Lascia che i giochi leggano direttamente i controller (pu\\u00f2 interferire con Steam Input, sconsigliato)\"),\"1\",\"\")," \
+    "T([\"NOTPROTON_DISABLE_HIDRAW\"],npL(\"Disable hidraw\",\"停用 hidraw\",\"Disable hidraw\"),\"1\",\"\")" \
+    "]},\"ctl\")," \
     "(0," RT ".jsxs)(" BARREL ".XY,{label:npL(\"Environment variables\",\"环境变量\"),children:[" \
     "(0," RT ".jsx)(\"textarea\",{className:\"MSCXEnvField\",rows:6,defaultValue:envDraft," \
     "placeholder:\"FOO=bar\\nDXMT_CONFIG=d3d11.example=1\",spellCheck:false," \
