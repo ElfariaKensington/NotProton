@@ -385,9 +385,8 @@ static int out_expand(np_out_t *o, const char *replace, const np_cap_t *caps) {
     "]},\"ctl\")," \
     "fex&&(0," RT ".jsx)(" BARREL ".XY,{label:\"FEX\"," \
     "children:D(\"FEX_X87REDUCEDPRECISION\"," \
-    "\"Reduced x87 precision (Reducing precision improves game performance, is enabled by default in CrossOver Preview)\")},\"fex\")," \
-    NP_CX_OPTIONS_ENV_SECTION(RT, BARREL) \
-    "]})})}"
+    "\"Reduced x87 precision (Reducing precision improves game performance, is enabled by default in CrossOver Preview)\")},\"fex\")" \
+    "].concat([" NP_CX_OPTIONS_ENV_SECTION(RT, BARREL) "])})})}"
 
 #define NP_CX_OPTIONS_CAPTURE(RT, BARREL) \
     "((npReact,npUI)=>" NP_CX_OPTIONS_BODY("np", "npReact()", "npUI()") ")(()=>" RT ",()=>" BARREL ")"
