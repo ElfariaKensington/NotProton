@@ -295,31 +295,6 @@ static int out_expand(np_out_t *o, const char *replace, const np_cap_t *caps) {
     ".MSCXPanel .MSCXEnvHint{margin-top:6px;color:#a7adb4;font-size:12px;line-height:1.4}" \
     ".MSCXNoBottomGap{margin-bottom:0}\""
 
-#define NP_CX_OPTIONS_ENV_INIT \
-    "envKey=\"NOTPROTON_GAME_ENV_B64\",envStore=\"NotProtonGameEnv_\"+t.unAppID," \
-    "envDraftKey=envStore+\"_draft\",envAppliedKey=envStore+\"_applied\"," \
-    "envRead=k=>{try{return globalThis.localStorage?.getItem(k)}catch(e){return null}}," \
-    "envSaved=envRead(envDraftKey),envDraft=envSaved===null?(envRead(envAppliedKey)||\"\"):envSaved," \
-    "envParse=raw=>{const m=new Map;for(const line of raw.split(/\\r?\\n/)){const x=line.trim();" \
-    "if(!x||x[0]===\"#\")continue;const i=line.indexOf(\"=\");if(i<1)continue;" \
-    "const k=line.slice(0,i).trim(),v=line.slice(i+1);if(/^[A-Za-z_][A-Za-z0-9_]*$/.test(k))m.set(k,v)}return m}," \
-    "envEdit=e=>{try{globalThis.localStorage?.setItem(envDraftKey,e.target.value)}catch(err){}}," \
-    "envApply=e=>{const raw=e.target.value,entries=[...envParse(raw)],payload=entries.map(([k,v])=>k+\"=\"+v).join(\"\\n\")," \
-    "token=payload?btoa(unescape(encodeURIComponent(payload))):null;" \
-    "try{globalThis.localStorage?.setItem(envDraftKey,raw);globalThis.localStorage?.setItem(envAppliedKey,raw)}catch(err){}" \
-    "s([[envKey,token]])},"
-
-#define NP_CX_OPTIONS_ENV_SECTION(RT, BARREL) \
-    "(0," RT ".jsxs)(" BARREL ".XY,{label:npL(\"Environment variables\",\"环境变量\",\"Variabili d'ambiente\"),children:[" \
-    "(0," RT ".jsx)(\"textarea\",{className:\"MSCXEnvField\",rows:6,defaultValue:envDraft," \
-    "placeholder:\"FOO=bar\\nDXMT_CONFIG=d3d11.example=1\",spellCheck:false," \
-    "onChange:envEdit,onBlur:envApply,\"aria-label\":npL(\"Per-game environment variables\",\"每个游戏的环境变量\",\"Variabili d'ambiente per gioco\")})," \
-    "(0," RT ".jsx)(\"div\",{className:\"MSCXEnvHint\",children:npL(" \
-    "\"One KEY=VALUE per line. Blank lines and # comments are ignored. Changes apply on blur; restart the game to use them.\"," \
-    "\"每行一个 KEY=VALUE；忽略空行和 # 注释。离开输入框时应用更改；重启游戏后生效。\"," \
-    "\"Una voce CHIAVE=VALORE per riga. Le righe vuote e i commenti con # vengono ignorati. Le modifiche si applicano alla perdita del focus; riavvia il gioco per renderle effettive.\")})" \
-    "]},\"env\")"
-
 // FEX runs arm64 Wine, which has no D3DMetal and never runs under Rosetta.
 #define NP_CX_OPTIONS_BODY(ARG, RT, BARREL) \
     ARG "=>{" \
@@ -327,7 +302,6 @@ static int out_expand(np_out_t *o, const char *replace, const np_cap_t *caps) {
     "fex=" NP_FEX_TOOLS ".indexOf(t.strCompatToolName||\"" NP_FALLBACK_TOOL "\")>=0," \
     "npZh=" NP_WEB_IS_ZH ",npIt=" NP_WEB_IS_IT ",npL=(en,zh,it)=>npZh?zh:npIt?it:en," \
     "L=MSCXLaunch(o,t.unAppID),g=L.g,s=L.s," \
-    NP_CX_OPTIONS_ENV_INIT \
     "T=(ks,l,on,off)=>(0," RT ".jsx)(" BARREL ".Yh,{className:\"MSCXRow\",label:l," \
     "checked:g(ks[0])===on," \
     "onChange:v=>s(ks.map(k=>[k,v?on:(off||\"\")]))},ks[0])," \
@@ -385,11 +359,39 @@ static int out_expand(np_out_t *o, const char *replace, const np_cap_t *caps) {
     "]},\"ctl\")," \
     "fex&&(0," RT ".jsx)(" BARREL ".XY,{label:\"FEX\"," \
     "children:D(\"FEX_X87REDUCEDPRECISION\"," \
-    "\"Reduced x87 precision (Reducing precision improves game performance, is enabled by default in CrossOver Preview)\")},\"fex\")" \
-    "].concat([" NP_CX_OPTIONS_ENV_SECTION(RT, BARREL) "])})})}"
+    "\"Reduced x87 Precision (Reducing precision improves game performance, is enabled by default in CrossOver Preview)\")},\"fex\")" \
+    "]})})}"
 
 #define NP_CX_OPTIONS_CAPTURE(RT, BARREL) \
-    "((npReact,npUI)=>" NP_CX_OPTIONS_BODY("np", "npReact()", "npUI()") ")(()=>" RT ",()=>" BARREL ")"
+    "((npReact,npUI)=>{const _o=" NP_CX_OPTIONS_BODY("np", "npReact()", "npUI()") ";" \
+    "return np=>{" \
+    "const r=_o(np);if(!r)return null;" \
+    "const t=np.details,o=t.strLaunchOptions||\"\"," \
+    "npZh=" NP_WEB_IS_ZH ",npIt=" NP_WEB_IS_IT ",npL=(en,zh,it)=>npZh?zh:npIt?it:en," \
+    "L=MSCXLaunch(o,t.unAppID),s=L.s," \
+    "envKey=\"NOTPROTON_GAME_ENV_B64\",envStore=\"NotProtonGameEnv_\"+t.unAppID," \
+    "envDraftKey=envStore+\"_draft\",envAppliedKey=envStore+\"_applied\"," \
+    "envRead=k=>{try{return globalThis.localStorage?.getItem(k)}catch(e){return null}}," \
+    "envSaved=envRead(envDraftKey),envDraft=envSaved===null?(envRead(envAppliedKey)||\"\"):envSaved," \
+    "envParse=raw=>{const m=new Map;for(const line of raw.split(/\\r?\\n/)){const x=line.trim();" \
+    "if(!x||x[0]===\"#\")continue;const i=line.indexOf(\"=\");if(i<1)continue;" \
+    "const k=line.slice(0,i).trim(),v=line.slice(i+1);if(/^[A-Za-z_][A-Za-z0-9_]*$/.test(k))m.set(k,v)}return m}," \
+    "envEdit=e=>{try{globalThis.localStorage?.setItem(envDraftKey,e.target.value)}catch(err){}}," \
+    "envApply=e=>{const raw=e.target.value,entries=[...envParse(raw)],payload=entries.map(([k,v])=>k+\"=\"+v).join(\"\\n\")," \
+    "token=payload?btoa(unescape(encodeURIComponent(payload))):null;" \
+    "try{globalThis.localStorage?.setItem(envDraftKey,raw);globalThis.localStorage?.setItem(envAppliedKey,raw)}catch(err){}" \
+    "s([[envKey,token]])};" \
+    "const envSection=(0,npReact().jsxs)(npUI().XY,{label:npL(\"Environment variables\",\"环境变量\",\"Variabili d'ambiente\"),children:[" \
+    "(0,npReact().jsx)(\"textarea\",{className:\"MSCXEnvField\",rows:6,defaultValue:envDraft," \
+    "placeholder:\"FOO=bar\\nDXMT_CONFIG=d3d11.example=1\",spellCheck:false," \
+    "onChange:envEdit,onBlur:envApply,\"aria-label\":npL(\"Per-game environment variables\",\"每个游戏的环境变量\",\"Variabili d'ambiente per gioco\")})," \
+    "(0,npReact().jsx)(\"div\",{className:\"MSCXEnvHint\",children:npL(" \
+    "\"One KEY=VALUE per line. Blank lines and # comments are ignored. Changes apply on blur; restart the game to use them.\"," \
+    "\"每行一个 KEY=VALUE；忽略空行和 # 注释。离开输入框时应用更改；重启游戏后生效。\"," \
+    "\"Una voce CHIAVE=VALORE per riga. Le righe vuote e i commenti con # vengono ignorati. Le modifiche si applicano alla perdita del focus; riavvia il gioco per renderle effettive.\")})" \
+    "]},\"env\");" \
+    "return(0,npReact().jsx)(\"div\",{className:\"MSCXPanel\",children:(0,npReact().jsxs)(npReact().Fragment,{children:r.props.children.props.children.concat([envSection])})})" \
+    "}})(()=>" RT ",()=>" BARREL ")"
 
 #define NP_CX_OPTIONS_COMPONENT \
     "MSCXLaunch=" NP_CX_LAUNCH ",MSCXPick=" NP_CX_PICK "," \
