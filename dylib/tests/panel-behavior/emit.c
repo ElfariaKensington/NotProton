@@ -42,6 +42,7 @@ int main(int argc, char **argv) {
                                   argc > 3 ? (size_t)(argc - 3) : 0);
         if (data) set_sample_data();
         np_webpatch_set_features(getenv("NP_TEST_READY"), getenv("NP_TEST_FEATS"));
+        np_webpatch_set_variants(getenv("NP_TEST_VARS"));
         put_panel(strncmp(form, "component", 9) == 0 ? NP_CX_OPTIONS_COMPONENT
                                                      : NP_CX_OPTIONS_STATEMENT);
         return 0;

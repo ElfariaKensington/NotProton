@@ -15,7 +15,8 @@ const expand = (s, caps) => s.replace(/[\u0001-\u0008\u0013-\u0016]/g, c => {
 
 const mk = (type, props) => ({ type, props });
 const react = { jsx: mk, jsxs: mk, Fragment: 'Fragment' };
-const STUB_TYPES = { XY: 'Section', m: 'Dropdown', Yh: 'Toggle', $n: 'Button', Vb: 'FieldDropdown', D0: 'Field' };
+const STUB_TYPES = { XY: 'Section', m: 'Dropdown', Yh: 'Toggle', $n: 'Button', Vb: 'FieldDropdown', D0: 'Field',
+                     y4: 'Checkbox', J1: 'FieldProvider' };
 const barrelFor = emit => Object.fromEntries(
   execFileSync(emit, ['barrel-names'], { encoding: 'utf8' }).trim().split('\n').map(n => {
     if (!(n in STUB_TYPES)) throw new Error('the page takes ' + n + ' from Steam and the harness has no stub');
@@ -32,10 +33,11 @@ const FORMS = {
 // `fallback` and `fexTools` stand in for what the hook sets before the transform.
 function panel(emit, form, globals = { document: { documentElement: { lang: 'en' } } },
                { fallback = 'notproton', fexTools = [], names = ['R0', 'B0'], data = false, drop = [],
-                 ready, feats } = {}) {
+                 ready, feats, vars } = {}) {
   const env = { ...process.env };
   if (ready !== undefined) env.NP_TEST_READY = ready;
   if (feats !== undefined) env.NP_TEST_FEATS = feats;
+  if (vars !== undefined) env.NP_TEST_VARS = vars;
   const raw = execFileSync(emit, [form + (data ? '-data' : ''), fallback, ...fexTools],
                            { encoding: 'utf8', env }).trim();
   const barrel = barrelFor(emit);
