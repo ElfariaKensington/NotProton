@@ -2,9 +2,18 @@ name: app
 
 on:
   push:
-    branches: [main]
+    branches: [main, feature/per-game-environment-variables]
   pull_request:
   workflow_dispatch:
+    inputs:
+      runner:
+        description: "Runner to use. Self-hosted requires macOS, Xcode 27.0 at /Applications/Xcode_27.0.app, and Homebrew."
+        type: choice
+        required: true
+        default: github-hosted
+        options:
+          - github-hosted
+          - self-hosted-macos
   workflow_call:
 
 permissions:
@@ -17,7 +26,7 @@ env:
 jobs:
   build:
     name: full app build
-    runs-on: xcode-27
+    runs-on: ${{ inputs.runner == 'self-hosted-macos' && fromJSON('["self-hosted", "macOS"]') || 'xcode-27' }}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4

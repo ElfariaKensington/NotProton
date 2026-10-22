@@ -369,7 +369,12 @@ static int out_expand(np_out_t *o, const char *replace, const np_cap_t *caps) {
     "border-radius:2px;background:rgba(255,255,255,.12)}" \
     ".MSCXBar>div{position:absolute;top:0;bottom:0;left:-30%;width:30%;background:#1a9fff;" \
     "animation:MSCXSlide 1.2s linear infinite}" \
-    "@keyframes MSCXSlide{from{left:-30%}to{left:100%}}\""
+    "@keyframes MSCXSlide{from{left:-30%}to{left:100%}}" \
+    ".MSCXPanel .MSCXEnvField{box-sizing:border-box;display:block;width:100%;min-width:0;min-height:132px;resize:vertical;padding:10px;color:#dfe3e6;background:rgba(13,15,18,.72);border:1px solid rgba(130,140,150,.35);border-radius:3px;font:12px/1.5 monospace;white-space:pre}" \
+    ".MSCXPanel .MSCXEnvField:focus{outline:1px solid #66c0f4}" \
+    ".MSCXPanel .MSCXEnvHint{margin-top:6px;color:#a7adb4;font-size:12px;line-height:1.4}" \
+    ".MSCXNoBottomGap{margin-bottom:0}\""
+
 
 // FEX runs arm64 Wine, which has no D3DMetal and never runs under Rosetta.
 #define NP_CX_OPTIONS_BODY(ARG, RT, BARREL) \
@@ -440,7 +445,35 @@ static int out_expand(np_out_t *o, const char *replace, const np_cap_t *caps) {
     "]})})}"
 
 #define NP_CX_OPTIONS_CAPTURE(RT, BARREL) \
-    "((npReact,npUI)=>" NP_CX_OPTIONS_BODY("np", "npReact()", "npUI()") ")(()=>" RT ",()=>" BARREL ")"
+    "((npReact,npUI)=>{const _o=" NP_CX_OPTIONS_BODY("np", "npReact()", "npUI()") ";" \
+    "return np=>{" \
+    "const r=_o(np);if(!r)return null;" \
+    "const t=np.details,o=t.strLaunchOptions||\"\"," \
+    "npZh=" NP_WEB_IS_ZH ",npIt=" NP_WEB_IS_IT ",npL=(en,zh,it)=>npZh?zh:npIt?it:en," \
+    "L=MSCXLaunch(o,t.unAppID),s=L.s," \
+    "envKey=\"NOTPROTON_GAME_ENV_B64\",envStore=\"NotProtonGameEnv_\"+t.unAppID," \
+    "envDraftKey=envStore+\"_draft\",envAppliedKey=envStore+\"_applied\"," \
+    "envRead=k=>{try{return globalThis.localStorage?.getItem(k)}catch(e){return null}}," \
+    "envSaved=envRead(envDraftKey),envDraft=envSaved===null?(envRead(envAppliedKey)||\"\"):envSaved," \
+    "envParse=raw=>{const m=new Map;for(const line of raw.split(/\\r?\\n/)){const x=line.trim();" \
+    "if(!x||x[0]===\"#\")continue;const i=line.indexOf(\"=\");if(i<1)continue;" \
+    "const k=line.slice(0,i).trim(),v=line.slice(i+1);if(/^[A-Za-z_][A-Za-z0-9_]*$/.test(k))m.set(k,v)}return m}," \
+    "envEdit=e=>{try{globalThis.localStorage?.setItem(envDraftKey,e.target.value)}catch(err){}}," \
+    "envApply=e=>{const raw=e.target.value,entries=[...envParse(raw)],payload=entries.map(([k,v])=>k+\"=\"+v).join(\"\\n\")," \
+    "token=payload?btoa(unescape(encodeURIComponent(payload))):null;" \
+    "try{globalThis.localStorage?.setItem(envDraftKey,raw);globalThis.localStorage?.setItem(envAppliedKey,raw)}catch(err){}" \
+    "s([[envKey,token]])};" \
+    "const envSection=(0,npReact().jsxs)(npUI().XY,{label:npL(\"Environment variables\",\"环境变量\",\"Variabili d'ambiente\"),children:[" \
+    "(0,npReact().jsx)(\"textarea\",{className:\"MSCXEnvField\",rows:6,defaultValue:envDraft," \
+    "placeholder:\"FOO=bar\\nDXMT_CONFIG=d3d11.example=1\",spellCheck:false," \
+    "onChange:envEdit,onBlur:envApply,\"aria-label\":npL(\"Per-game environment variables\",\"每个游戏的环境变量\",\"Variabili d'ambiente per gioco\")})," \
+    "(0,npReact().jsx)(\"div\",{className:\"MSCXEnvHint\",children:npL(" \
+    "\"One KEY=VALUE per line. Blank lines and # comments are ignored. Changes apply on blur; restart the game to use them.\"," \
+    "\"每行一个 KEY=VALUE；忽略空行和 # 注释。离开输入框时应用更改；重启游戏后生效。\"," \
+    "\"Una voce CHIAVE=VALORE per riga. Le righe vuote e i commenti con # vengono ignorati. Le modifiche si applicano alla perdita del focus; riavvia il gioco per renderle effettive.\")})" \
+    "]},\"env\");" \
+    "return(0,npReact().jsx)(\"div\",{className:\"MSCXPanel\",children:(0,npReact().jsxs)(npReact().Fragment,{children:r.props.children.props.children.concat([envSection])})})" \
+    "}})(()=>" RT ",()=>" BARREL ")"
 
 #define NP_CX_OPTIONS_COMPONENT \
     "MSCXLaunch=" NP_CX_LAUNCH ",MSCXPick=" NP_CX_PICK "," \
@@ -463,6 +496,24 @@ static int out_expand(np_out_t *o, const char *replace, const np_cap_t *caps) {
     "return e.map(x=>{const i=x.indexOf(\"=\"),v=x.slice(i+1);" \
     "return/[\"'\\\\]/.test(x)||/^[\\w.,:=\\/+@%-]*$/.test(v)?x:x.slice(0,i+1)+\"'\"+v+\"'\"})" \
     ".concat(\"%command%\",w.filter(x=>!k(x))).join(\" \")}"
+
+#define NP_ENV_CARRIER_BRIDGE \
+    "(()=>{try{const C=\"NOTPROTON_GAME_ENV_B64\",K=id=>\"NotProtonGameEnv_\"+id+\"_applied\";const clean=s=>String(s||\"\").replace(new RegExp(\"(^|\\\\s)\"" \
+    "+C+\"=[A-Za-z0-9+/=]+(?=\\\\s|$)\",\"g\"),\"$1\").trim();const payload=raw=>{const m=new Map;for(const line of String(raw||\"\").split(/\\r?\\n/)){const" \
+    " x=line.trim();if(!x||x[0]===\"#\")continue;const i=line.indexOf(\"=\");if(i<1)continue;const k=line.slice(0,i).trim(),v=line.slice(i+1);if(/^[A" \
+    "-Za-z_][A-Za-z0-9_]*$/.test(k))m.set(k,v)}return [...m].map(([k,v])=>k+\"=\"+v).join(\"\\n\")};const encode=raw=>{const p=payload(raw);return p?b" \
+    "toa(unescape(encodeURIComponent(p))):\"\"};const apps=globalThis.SteamClient?.Apps;if(apps?.SetAppLaunchOptions&&!apps.SetAppLaunchOptions.__n" \
+    "pEnvCarrier){const original=apps.SetAppLaunchOptions;const wrapped=function(id,o){let raw=null;try{raw=localStorage.getItem(K(id))}catch(e){" \
+    "}const old=/NOTPROTON_GAME_ENV_B64=([A-Za-z0-9+/=]+)/.exec(String(o||\"\"));const token=raw===null?(old?old[1]:\"\"):encode(raw);let s=clean(o);" \
+    "if(token){if(/%command%/i.test(s))s=s.replace(/%command%/i,C+\"=\"+token+\" %command%\");else s=C+\"=\"+token+\" %command%\"+(s?\" \"+s:\"\")}return ori" \
+    "ginal.call(this,id,s)};wrapped.__npEnvCarrier=true;try{apps.SetAppLaunchOptions=wrapped}catch(e){}}const hide=t=>{if(!t||typeof t!==\"object\"" \
+    ")return t;try{if(Object.getOwnPropertyDescriptor(t,\"strLaunchOptions\")?.get?.__npEnvDisplay)return t;let raw=String(t.strLaunchOptions||\"\");" \
+    "const get=()=>clean(raw);get.__npEnvDisplay=true;Object.defineProperty(t,\"strLaunchOptions\",{configurable:true,enumerable:true,get,set(v){ra" \
+    "w=String(v||\"\")}})}catch(e){}return t};const ds=window.appDetailsStore;if(ds&&typeof ds.RequestAppDetails===\"function\"&&!ds.RequestAppDetail" \
+    "s.__npEnvDisplay){const original=ds.RequestAppDetails;const wrapped=function(...args){return Promise.resolve(original.apply(this,args)).then" \
+    "(hide)};wrapped.__npEnvDisplay=true;try{ds.RequestAppDetails=wrapped}catch(e){}}for(const name of [\"m_mapAppDetails\",\"m_mapDetails\",\"m_mapAp" \
+    "ps\"]){const m=ds?.[name];if(m?.values)for(const t of m.values())hide(t)}}catch(e){console.warn(\"NotProton: launch-options display filter fai" \
+    "led\",e)}})()"
 
 #define NP_LAUNCH_MIGRATION \
     "(async()=>{try{" \
@@ -623,8 +674,8 @@ static const np_gate_t g_fixes[] = {
       "(\"#Settings_SteamPlay_DefaultTool\"),rgOptions:" NP_C6 ",disabled:0==" NP_C6 ".length,"
       "selectedOption:" NP_C1 "||\"" NP_FALLBACK_TOOL "\",",
       1, 0 },
-    { "this.m_bServicesInitialized=!0,SteamClient.UI.NotifyAppInitialized()",
-      "this.m_bServicesInitialized=!0," NP_LAUNCH_MIGRATION ",SteamClient.UI.NotifyAppInitialized()", 1, 0 },
+    { "this.m_bServicesInitialized=!0,SteamClient.UI.NotifyAppInitialized()", 
+      "this.m_bServicesInitialized=!0," NP_ENV_CARRIER_BRIDGE "," NP_LAUNCH_MIGRATION ",SteamClient.UI.NotifyAppInitialized()", 1, 0 },
     // Pr means macOS, td means Windows.
     // Steam Play makes every game count as available, so the Apple filter goes by oslist.
     // Games missing from appinfo.vdf, and other platforms, keep Steam's check.
@@ -637,7 +688,7 @@ static const np_gate_t g_fixes[] = {
       NP_C4 "(" NP_C5 "):(0," NP_C3 ".td)()?!0:" NP_C5
       ".is_available_on_current_platform&&!" NP_C5 ".is_invalid_os_type;",
       NP_WINDOWS_ONLY_CASE(NP_C3, NP_C5) "case " NP_C1 "." NP_C2 ":return " NP_MAC_CHECK(NP_C3, NP_C5)
-      "(0," NP_C3 ".CI)()&&!(0," NP_C3 ".mP)()?" NP_C4 "(" NP_C5 "):(0,"
+      "(0," NP_C3 ".CI)()&&!(0," NP_C3 ".mP)?" NP_C4 "(" NP_C5 "):(0,"
       NP_C3 ".td)()?!0:" NP_C5 ".is_available_on_current_platform&&!" NP_C5 ".is_invalid_os_type;", 1, 0 },
 };
 #define NP_FIX_COUNT (sizeof(g_fixes) / sizeof(g_fixes[0]))
