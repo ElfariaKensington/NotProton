@@ -32,6 +32,8 @@ panel=$(printf '%s\n' "$panel_src" | grep -oE '[(\[]\\"[A-Z][A-Z0-9_]*\\"' \
   | sed 's/^.\\"//; s/\\"$//' | sort -u)
 [ -n "$panel" ] || no "no setting keys found in NP_CX_PANEL"
 for key in $panel; do
+    # Only a game's own page offers variants, so they have no default.
+    [ "$key" != NOTPROTON_RUNNER_VARIANT ] || continue
     printf '%s\n' "$all" | grep -Fxq "$key" || no "$key is on the panel but not in g_settings"
 done
 for key in $all; do

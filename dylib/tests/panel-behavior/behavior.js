@@ -10,7 +10,7 @@ for (const form of Object.keys(FORMS)) {
   const { render: P, written } = panel(emit, form);
   const t = runner(form);
   const nodes = opts => walk(P({ details: details(opts + ' %command%') }));
-  const toggles = ns => ns.filter(x => x.type === 'Checkbox').map(x => x.props.label);
+  const toggles = ns => ns.filter(x => x.type === 'Toggle').map(x => x.props.label);
   const sections = ns => ns.filter(x => x.type === 'Section').map(x => x.props.label.split(' ')[0]);
   const last = () => (written.length ? written[written.length - 1].opts : '');
 
@@ -78,7 +78,7 @@ for (const form of Object.keys(FORMS)) {
 
   const root = P({ details: details('') });
   t.ok(root.props.className === 'MSCXPanel', 'the panel root carries its own class');
-  const classes = nodes('').filter(x => x.type === 'Checkbox').map(x => x.props.className);
+  const classes = nodes('').filter(x => x.type === 'Toggle').map(x => x.props.className);
   t.ok(classes.length === 7 && classes.every(c => c === 'MSCXRow'), 'every checkbox carries the row class');
   const raw = o => nodes(o).find(x => x.props.label === 'Let games read controllers directly (May break Steam Input. Not recommended)');
   t.ok(sections(nodes('')).includes('Controllers') && raw('').props.checked === false,
@@ -207,8 +207,8 @@ for (const form of Object.keys(FORMS)) {
   const { render: PF } = panel(emit, form, undefined,
                               { ready: '{"NOTPROTON_ALPHA":0}', feats: FEATS });
   const fnodes = opts => walk(PF({ details: details(opts) }));
-  const frows = opts => fnodes(opts).filter(x => x.type === 'Toggle');
-  const grows = opts => fnodes(opts).filter(x => x.type === 'Checkbox');
+  const frows = opts => fnodes(opts).filter(x => x.type === 'ToggleField');
+  const grows = opts => fnodes(opts).filter(x => x.type === 'Toggle');
   const flabels = opts => frows(opts).map(x => x.props.label);
   const alpha = o => frows(o).find(x => x.props.label.startsWith('Alpha'));
 
@@ -217,7 +217,7 @@ for (const form of Object.keys(FORMS)) {
        'plugins add a Developer section');
   // y4 is the theme's ToggleField, the switch Steam's own settings rows use. Yh is
   // DialogCheckbox, which nothing in Steam's UI renders any more.
-  t.ok(frows('').length > 0 && frows('').every(x => x.type === 'Toggle'),
+  t.ok(frows('').length > 0 && frows('').every(x => x.type === 'ToggleField'),
        'Developer rows render as toggles, not checkboxes');
   t.ok(grows('').length > 0,
        'the Graphics and Controllers rows keep the checkbox they always had');
@@ -271,7 +271,7 @@ for (const form of Object.keys(FORMS)) {
   const chain = ready => {
     const { render } = panel(emit, form, undefined, { ready, feats: CHAIN });
     return o => walk(render({ details: details(o) }))
-      .filter(x => x.type === 'Toggle').map(x => x.props.label);
+      .filter(x => x.type === 'ToggleField').map(x => x.props.label);
   };
   t.ok(chain('{}')('NOTPROTON_BETA_SUB=1 NOTPROTON_BETA_SUB_SUB=1 %command%')
          .every(l => !l.startsWith('Beta:')),

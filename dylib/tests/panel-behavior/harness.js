@@ -16,7 +16,7 @@ const expand = (s, caps) => s.replace(/[\u0001-\u0008\u0013-\u0016]/g, c => {
 const mk = (type, props) => ({ type, props });
 const react = { jsx: mk, jsxs: mk, Fragment: 'Fragment' };
 const STUB_TYPES = { XY: 'Section', m: 'Dropdown', Yh: 'Toggle', $n: 'Button', Vb: 'FieldDropdown', D0: 'Field',
-                     y4: 'Toggle', J1: 'FieldProvider', d3: 'Slider', gz: 'SnapSlider' };
+                     y4: 'ToggleField', J1: 'FieldProvider', d3: 'Slider', gz: 'SnapSlider' };
 const barrelFor = emit => Object.fromEntries(
   execFileSync(emit, ['barrel-names'], { encoding: 'utf8' }).trim().split('\n').map(n => {
     if (!(n in STUB_TYPES)) throw new Error('the page takes ' + n + ' from Steam and the harness has no stub');
