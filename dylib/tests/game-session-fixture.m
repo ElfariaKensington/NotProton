@@ -6,6 +6,25 @@ int main(int argc, const char **argv) {
             NSRunningApplication *app = [NSRunningApplication runningApplicationWithProcessIdentifier:atoi(argv[2])];
             return app && [app terminate] ? 0 : 1;
         }
+        NSString *handoff = NSProcessInfo.processInfo.environment[@"NP_GAME_TEST_HANDOFF"];
+        if (handoff.length && !NSProcessInfo.processInfo.environment[@"NP_GAME_TEST_CHILD"]) {
+            NSTask *child = [NSTask new];
+            child.executableURL = [NSURL fileURLWithPath:handoff];
+            child.arguments = [NSProcessInfo.processInfo.arguments subarrayWithRange:NSMakeRange(1, argc - 1)];
+            NSMutableDictionary *environment = [NSProcessInfo.processInfo.environment mutableCopy];
+            [environment removeObjectForKey:@"NP_GAME_TEST_HANDOFF"];
+            child.environment = environment;
+            return [child launchAndReturnError:nil] ? 0 : 1;
+        }
+        if (getenv("NP_GAME_TEST_EARLY_EXIT") && !getenv("NP_GAME_TEST_CHILD")) {
+            // No NSApplication, LaunchServices registration, or window at all.
+            NSDictionary *state = @{@"pid": @(getpid()), @"policy": @(-1),
+                @"arguments": NSProcessInfo.processInfo.arguments,
+                @"libraries": NSProcessInfo.processInfo.environment[@"DYLD_INSERT_LIBRARIES"] ?: @""};
+            [[NSJSONSerialization dataWithJSONObject:state options:0 error:nil]
+                writeToFile:NSProcessInfo.processInfo.environment[@"NP_GAME_TEST_STATE"] atomically:YES];
+            for (;;) pause();
+        }
         NSApplication *app = NSApplication.sharedApplication;
         [app setActivationPolicy:NSApplicationActivationPolicyRegular];
         NSString *childPath = NSProcessInfo.processInfo.environment[@"NP_GAME_TEST_CHILD"];

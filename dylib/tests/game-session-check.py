@@ -60,7 +60,14 @@ class GameSession(unittest.TestCase):
     def test_unrelated_window_exit_does_not_end_the_session(self):
         self.check_session(quit_from_host=False, lingering_wrapper=True, unrelated_window=True)
 
-    def check_session(self, quit_from_host, lingering_wrapper=False, unrelated_window=False):
+    def test_crash_before_appkit_clears_a_lingering_bootstrap(self):
+        self.check_session(quit_from_host=False, lingering_wrapper=True, early_crash=True)
+
+    def test_launcher_handoff_keeps_child_alive_until_it_exits(self):
+        self.check_session(quit_from_host=False, lingering_wrapper=True, handoff=True)
+
+    def check_session(self, quit_from_host, lingering_wrapper=False, unrelated_window=False,
+                      early_crash=False, handoff=False):
         import plistlib
         self.stage(True)
         with (self.bundle / 'Contents/Info.plist').open('wb') as stream:
@@ -83,6 +90,13 @@ class GameSession(unittest.TestCase):
             child.write_bytes(fixture.read_bytes())
             child.chmod(0o755)
             self.env.update(NP_GAME_TEST_CHILD=str(child), NP_GAME_TEST_WINDOW='1')
+            if early_crash:
+                self.env['NP_GAME_TEST_EARLY_EXIT'] = '1'
+            if handoff:
+                worker = self.macos / 'Worker.exe'
+                worker.write_bytes(fixture.read_bytes())
+                worker.chmod(0o755)
+                self.env['NP_GAME_TEST_HANDOFF'] = str(worker)
             arguments = [r'C:\Program Files (x86)\Steam\steam.exe',
                          str(self.macos / 'Other.exe') if unrelated_window else str(child), *arguments]
         host = subprocess.Popen([self.macos / 'launcher', *arguments], env=self.env)
@@ -96,13 +110,16 @@ class GameSession(unittest.TestCase):
                 time.sleep(0.05)
             data = json.loads(state.read_text())
             client_pid = data['pid']
-            self.assertEqual(data['policy'], 1)
+            self.assertEqual(data['policy'], -1 if early_crash else 1)
             self.assertEqual(data['arguments'][1:], arguments)
             self.assertIn(str(self.macos / 'game-client.dylib'), data['libraries'])
             if lingering_wrapper:
                 # Allow the real key-window notification to reach the host.
                 time.sleep(0.5)
                 self.assertIsNone(host.poll())
+            if handoff:
+                time.sleep(1.5)
+                self.assertIsNone(host.poll(), 'launcher exit must not stop its live child')
             if quit_from_host:
                 subprocess.run([fixture, '--quit', str(host.pid)], check=True)
             else:

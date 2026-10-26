@@ -7,8 +7,8 @@
 @property(nonatomic, copy) NSString *channel;
 @property(nonatomic) BOOL stopping;
 @property(nonatomic, copy) NSString *gameExecutable;
-@property(nonatomic, strong) NSMutableDictionary<NSNumber *, id> *windowWatches;
-@property(nonatomic, strong) NSNumber *primaryWindowPID;
+@property(nonatomic, strong) NSMutableDictionary<NSNumber *, id> *processWatches;
+@property(nonatomic, strong) NSNumber *primaryPID;
 @property(nonatomic) BOOL primaryExited;
 @end
 
@@ -32,26 +32,39 @@
     NSNumber *pid = notification.userInfo[@"pid"];
     if (![pid isKindOfClass:NSNumber.class] || pid.intValue <= 0) return;
     NSRunningApplication *client = [NSRunningApplication runningApplicationWithProcessIdentifier:pid.intValue];
-    if (!client || client.terminated) return;
-    self.clients[pid] = client;
-    if (![notification.userInfo[@"windowed"] boolValue] || self.windowWatches[pid]) return;
+    if (client && !client.terminated) self.clients[pid] = client;
+    // A process can fail before registering with LaunchServices or making a
+    // window. Its lifetime still belongs to the session.
     NSString *executable = notification.userInfo[@"executable"];
-    if ([executable isKindOfClass:NSString.class] &&
-        [executable caseInsensitiveCompare:self.gameExecutable] == NSOrderedSame)
-        self.primaryWindowPID = pid;
+    if (![executable isKindOfClass:NSString.class] ||
+        [executable.pathExtension caseInsensitiveCompare:@"exe"] != NSOrderedSame) return;
+    BOOL primary = [executable caseInsensitiveCompare:self.gameExecutable] == NSOrderedSame;
+    NSString *image = notification.userInfo[@"image"];
+    NSString *path = [image isKindOfClass:NSString.class] ?
+        [[image stringByReplacingOccurrencesOfString:@"\\" withString:@"/"] lowercaseString] : @"";
+    NSString *name = executable.lowercaseString;
+    BOOL backgroundHelper = [path containsString:@"/windows/"] ||
+        [name hasPrefix:@"unitycrashhandler"] || [name hasPrefix:@"crashreportclient"] ||
+        [name isEqualToString:@"winedbg.exe"] || [name isEqualToString:@"werfault.exe"];
+    if (!primary && ([name isEqualToString:@"steam.exe"] ||
+        (backgroundHelper && ![notification.userInfo[@"windowed"] boolValue]))) return;
+    if (primary) self.primaryPID = pid;
+    if (self.processWatches[pid]) return;
     dispatch_source_t watch = dispatch_source_create(DISPATCH_SOURCE_TYPE_PROC,
         (uintptr_t)pid.intValue, DISPATCH_PROC_EXIT, dispatch_get_main_queue());
     if (!watch) return;
-    self.windowWatches[pid] = watch;
+    self.processWatches[pid] = watch;
+    NSLog(@"NotProton session: tracking %@ pid=%@ primary=%d", executable, pid, primary);
     __weak NPGameHost *weakSelf = self;
     dispatch_source_set_event_handler(watch, ^{
         NPGameHost *host = weakSelf;
         if (!host) return;
-        dispatch_source_t ended = host.windowWatches[pid];
+        dispatch_source_t ended = host.processWatches[pid];
         if (ended) dispatch_source_cancel(ended);
-        [host.windowWatches removeObjectForKey:pid];
-        if ([pid isEqual:host.primaryWindowPID]) host.primaryExited = YES;
-        // Other windowed clients may be a launcher handing off to the game.
+        [host.processWatches removeObjectForKey:pid];
+        NSLog(@"NotProton session: process exited pid=%@", pid);
+        if ([pid isEqual:host.primaryPID]) host.primaryExited = YES;
+        // Keep child executables alive across launcher-to-game handoffs.
         // Never treat a closed/minimized window as an exited process.
         [NSObject cancelPreviousPerformRequestsWithTarget:host selector:@selector(checkGameExit) object:nil];
         [host performSelector:@selector(checkGameExit) withObject:nil afterDelay:1
@@ -70,7 +83,7 @@
 }
 
 - (void)checkGameExit {
-    if (!self.stopping && self.primaryExited && self.windowWatches.count == 0)
+    if (!self.stopping && self.primaryExited && self.processWatches.count == 0)
         [NSApp terminate:nil];
 }
 
@@ -106,7 +119,7 @@
 
 - (void)applicationDidFinishLaunching:(NSNotification *)notification {
     self.clients = [NSMutableDictionary new];
-    self.windowWatches = [NSMutableDictionary new];
+    self.processWatches = [NSMutableDictionary new];
     self.gameExecutable = @"";
     for (NSString *argument in [NSProcessInfo.processInfo.arguments subarrayWithRange:
             NSMakeRange(1, NSProcessInfo.processInfo.arguments.count - 1)]) {
