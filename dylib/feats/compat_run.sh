@@ -50,7 +50,7 @@ try:
             key=process['hasrunkey'].casefold()
             assert key.startswith('hkey_local_machine\\software\\valve\\steam\\apps\\commonredist\\')
             suffix=key.split('commonredist\\',1)[1]
-            assert suffix in ('vcredist\\2019','vcredist\\2022','directx\\jun2010')
+            assert suffix in ('vcredist\\2013','vcredist\\2019','vcredist\\2022','directx\\jun2010')
             assert process['process 1'].casefold().startswith('%installdir%\\_commonredist\\'+suffix+'\\')
             # These common-redist completion markers use the redirected view.
             key=key.replace('hkey_local_machine\\software\\','software\\wow6432node\\',1)

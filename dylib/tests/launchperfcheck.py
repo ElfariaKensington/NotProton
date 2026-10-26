@@ -39,6 +39,29 @@ class LaunchFastPaths(unittest.TestCase):
     def test_completed_install_check(self):
         self.assertEqual(self.run_code('NP_COMPLETED_REDIST', self.install_fixture(), self.root).returncode, 0)
 
+    def vcredist_2013_fixture(self, x64_complete=True):
+        script = self.install_fixture()
+        text = script.read_text().replace('DirectX\\\\Jun2010', 'vcredist\\\\2013')
+        text = text.replace('dxsetup', 'x86 12.0.30501').replace('DXSETUP.exe', 'vcredist_x86.exe')
+        # Two architectures must both be complete before the helper is skipped.
+        text = text.replace('"nocleanup" "1"', '"nocleanup" "1" } "x64 12.0.30501" { '
+            '"hasrunkey" "HKEY_LOCAL_MACHINE\\\\Software\\\\Valve\\\\Steam\\\\Apps\\\\CommonRedist\\\\vcredist\\\\2013" '
+            '"process 1" "%INSTALLDIR%\\\\_CommonRedist\\\\vcredist\\\\2013\\\\vcredist_x64.exe" '
+            '"nocleanup" "1" "requirement_os" { "Is64BitWindows" "1" }')
+        script.write_text(text)
+        (self.root / 'system.reg').write_text('[Software\\\\Wow6432Node\\\\Valve\\\\Steam\\\\Apps\\\\CommonRedist\\\\vcredist\\\\2013]\n'
+            '"x86 12.0.30501"=dword:00000001\n'
+            '"x64 12.0.30501"=dword:0000000' + ('1' if x64_complete else '0') + '\n')
+        return script
+
+    def test_completed_vcredist_2013_both_architectures(self):
+        script = self.vcredist_2013_fixture()
+        self.assertEqual(self.run_code('NP_COMPLETED_REDIST', script, self.root).returncode, 0)
+
+    def test_incomplete_vcredist_2013_requires_evaluator(self):
+        script = self.vcredist_2013_fixture(x64_complete=False)
+        self.assertNotEqual(self.run_code('NP_COMPLETED_REDIST', script, self.root).returncode, 0)
+
     def test_incomplete_install_requires_evaluator(self):
         self.assertNotEqual(self.run_code('NP_COMPLETED_REDIST', self.install_fixture(False), self.root).returncode, 0)
 
