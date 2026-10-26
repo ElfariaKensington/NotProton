@@ -49,6 +49,12 @@ class GameSession(unittest.TestCase):
         self.assertTrue((self.macos / 'wine-launch.sh').is_file())
 
     def test_quit_stops_only_the_requested_prefix_and_preserves_arguments(self):
+        self.check_session(quit_from_host=True)
+
+    def test_game_exit_removes_the_host_and_stops_the_prefix(self):
+        self.check_session(quit_from_host=False)
+
+    def check_session(self, quit_from_host):
         import plistlib
         self.stage(True)
         with (self.bundle / 'Contents/Info.plist').open('wb') as stream:
@@ -80,7 +86,10 @@ class GameSession(unittest.TestCase):
             self.assertEqual(data['policy'], 1)
             self.assertEqual(data['arguments'][1:], arguments)
             self.assertIn(str(self.macos / 'game-client.dylib'), data['libraries'])
-            subprocess.run([fixture, '--quit', str(host.pid)], check=True)
+            if quit_from_host:
+                subprocess.run([fixture, '--quit', str(host.pid)], check=True)
+            else:
+                os.kill(client_pid, signal.SIGTERM)
             self.assertEqual(host.wait(timeout=15), 0)
             self.assertEqual(stopped.read_text().splitlines(), [self.env['WINEPREFIX'], '-k'])
         finally:

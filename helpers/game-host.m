@@ -40,6 +40,15 @@
     return NO;
 }
 
+- (void)gameTaskDidExit {
+    if (!self.stopping) [NSApp terminate:nil];
+}
+
+- (void)finishShutdown {
+    if (self.task.running) [self.task terminate];
+    [NSApp replyToApplicationShouldTerminate:YES];
+}
+
 - (NSApplicationTerminateReply)applicationShouldTerminate:(NSApplication *)application {
     if (self.stopping) return NSTerminateLater;
     self.stopping = YES;
@@ -55,10 +64,8 @@
             if ([stop launchAndReturnError:&error]) [stop waitUntilExit];
             else NSLog(@"NotProton could not stop the Wine session: %@", error);
         }
-        dispatch_async(dispatch_get_main_queue(), ^{
-            if (self.task.running) [self.task terminate];
-            [application replyToApplicationShouldTerminate:YES];
-        });
+        [self performSelectorOnMainThread:@selector(finishShutdown) withObject:nil
+            waitUntilDone:NO modes:@[NSRunLoopCommonModes]];
     });
     return NSTerminateLater;
 }
@@ -95,10 +102,11 @@
     self.task.environment = environment;
     __weak NPGameHost *weakSelf = self;
     self.task.terminationHandler = ^(NSTask *task) {
-        dispatch_async(dispatch_get_main_queue(), ^{
-            NPGameHost *host = weakSelf;
-            if (host && !host.stopping) [NSApp terminate:nil];
-        });
+        // terminate: may run a nested event loop while awaiting the delegate's reply.
+        // Keep it outside a main-queue block so shutdown callbacks can run.
+        NPGameHost *host = weakSelf;
+        [host performSelectorOnMainThread:@selector(gameTaskDidExit) withObject:nil
+            waitUntilDone:NO modes:@[NSRunLoopCommonModes]];
     };
     NSError *error = nil;
     if (![self.task launchAndReturnError:&error]) {
