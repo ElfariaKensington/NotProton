@@ -8,11 +8,11 @@ static BOOL clientPolicy(id application, SEL selector, NSApplicationActivationPo
     return originalPolicy(application, selector, policy);
 }
 
-static void announceClient(void) {
+static void announceClient(BOOL windowed) {
     NSString *channel = NSProcessInfo.processInfo.environment[@"NOTPROTON_GAME_CHANNEL"];
     if (!channel.length) return;
     [[NSDistributedNotificationCenter defaultCenter] postNotificationName:channel object:nil
-        userInfo:@{@"pid": @(getpid())} deliverImmediately:YES];
+        userInfo:@{@"pid": @(getpid()), @"executable": NSProcessInfo.processInfo.processName, @"windowed": @(windowed)} deliverImmediately:YES];
 }
 
 __attribute__((constructor)) static void setupClient(void) {
@@ -24,16 +24,16 @@ __attribute__((constructor)) static void setupClient(void) {
         method_setImplementation(method, (IMP)clientPolicy);
         dispatch_async(dispatch_get_main_queue(), ^{
             [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
-            announceClient();
+            announceClient(NO);
             NSNotificationCenter *center = NSNotificationCenter.defaultCenter;
             [center addObserverForName:NSApplicationDidFinishLaunchingNotification object:nil
                 queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *notification) {
                     [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
-                    announceClient();
+                    announceClient(NO);
                 }];
             [center addObserverForName:NSWindowDidBecomeKeyNotification object:nil
                 queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *notification) {
-                    announceClient();
+                    announceClient(YES);
                 }];
         });
     }

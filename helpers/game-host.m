@@ -6,6 +6,10 @@
 @property(nonatomic, strong) NSMutableDictionary<NSNumber *, NSRunningApplication *> *clients;
 @property(nonatomic, copy) NSString *channel;
 @property(nonatomic) BOOL stopping;
+@property(nonatomic, copy) NSString *gameExecutable;
+@property(nonatomic, strong) NSMutableDictionary<NSNumber *, id> *windowWatches;
+@property(nonatomic, strong) NSNumber *primaryWindowPID;
+@property(nonatomic) BOOL primaryExited;
 @end
 
 @implementation NPGameHost
@@ -28,7 +32,32 @@
     NSNumber *pid = notification.userInfo[@"pid"];
     if (![pid isKindOfClass:NSNumber.class] || pid.intValue <= 0) return;
     NSRunningApplication *client = [NSRunningApplication runningApplicationWithProcessIdentifier:pid.intValue];
-    if (client && !client.terminated) self.clients[pid] = client;
+    if (!client || client.terminated) return;
+    self.clients[pid] = client;
+    if (![notification.userInfo[@"windowed"] boolValue] || self.windowWatches[pid]) return;
+    NSString *executable = notification.userInfo[@"executable"];
+    if ([executable isKindOfClass:NSString.class] &&
+        [executable caseInsensitiveCompare:self.gameExecutable] == NSOrderedSame)
+        self.primaryWindowPID = pid;
+    dispatch_source_t watch = dispatch_source_create(DISPATCH_SOURCE_TYPE_PROC,
+        (uintptr_t)pid.intValue, DISPATCH_PROC_EXIT, dispatch_get_main_queue());
+    if (!watch) return;
+    self.windowWatches[pid] = watch;
+    __weak NPGameHost *weakSelf = self;
+    dispatch_source_set_event_handler(watch, ^{
+        NPGameHost *host = weakSelf;
+        if (!host) return;
+        dispatch_source_t ended = host.windowWatches[pid];
+        if (ended) dispatch_source_cancel(ended);
+        [host.windowWatches removeObjectForKey:pid];
+        if ([pid isEqual:host.primaryWindowPID]) host.primaryExited = YES;
+        // Other windowed clients may be a launcher handing off to the game.
+        // Never treat a closed/minimized window as an exited process.
+        [NSObject cancelPreviousPerformRequestsWithTarget:host selector:@selector(checkGameExit) object:nil];
+        [host performSelector:@selector(checkGameExit) withObject:nil afterDelay:1
+            inModes:@[NSRunLoopCommonModes]];
+    });
+    dispatch_resume(watch);
 }
 
 - (void)applicationDidBecomeActive:(NSNotification *)notification {
@@ -38,6 +67,11 @@
 - (BOOL)applicationShouldHandleReopen:(NSApplication *)application hasVisibleWindows:(BOOL)visible {
     [self focusGame];
     return NO;
+}
+
+- (void)checkGameExit {
+    if (!self.stopping && self.primaryExited && self.windowWatches.count == 0)
+        [NSApp terminate:nil];
 }
 
 - (void)gameTaskDidExit {
@@ -72,6 +106,16 @@
 
 - (void)applicationDidFinishLaunching:(NSNotification *)notification {
     self.clients = [NSMutableDictionary new];
+    self.windowWatches = [NSMutableDictionary new];
+    self.gameExecutable = @"";
+    for (NSString *argument in [NSProcessInfo.processInfo.arguments subarrayWithRange:
+            NSMakeRange(1, NSProcessInfo.processInfo.arguments.count - 1)]) {
+        NSString *name = [[argument stringByReplacingOccurrencesOfString:@"\\" withString:@"/"] lastPathComponent];
+        if ([name.pathExtension caseInsensitiveCompare:@"exe"] == NSOrderedSame &&
+            [name caseInsensitiveCompare:@"steam.exe"] != NSOrderedSame) {
+            self.gameExecutable = name; break;
+        }
+    }
     self.channel = [@"com.notproton.game." stringByAppendingString:NSUUID.UUID.UUIDString];
     [[NSDistributedNotificationCenter defaultCenter]
         addObserver:self selector:@selector(registerClient:) name:self.channel object:nil
