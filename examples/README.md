@@ -49,7 +49,7 @@ may only be given once, an empty value, a missing `label`.
 | `depends` | another plugin's key. The row is hidden until that one is on, and indents under it. |
 | `requires` | repeatable, up to 4. A file, absolute or relative to `$HOME`; the first that exists wins. A row whose files are all missing is greyed out as "(not installed)". |
 | `inject` | `1` loads the file `requires` found into the game. |
-| `env` | repeatable. `NAME=VALUE` exported for the game. |
+| `env` | repeatable. `NAME=VALUE` exported for the game. Names the launch sets itself, such as `PATH`, `HOME`, `WINEPREFIX` or anything starting `DYLD_` or `NOTPROTON_`, are skipped. |
 | `overrides` | added to `WINEDLLOVERRIDES`, e.g. `dxgi=n,b`. |
 | `stage` | a folder whose files are copied into the prefix's `system32` before launch. |
 

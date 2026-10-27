@@ -2396,6 +2396,18 @@ terminate() {
 open_pid=""
 trap terminate TERM INT HUP
 
+# What this launch sets itself, which neither a plugin's env nor a NOTPROTON_ENV_ option
+# may replace. One list for both, so the two ways of setting a variable cannot differ.
+np_env_reserved() {
+  case "$1" in
+    (DYLD_* | PATH | HOME | CX_ROOT | CX_HOME | CX_APPLEGPTK_LIBD3DSHARED_PATH | STEAM_COMPAT_* | \
+     STEAM_DYLD_INSERT_LIBRARIES | WINEPREFIX | WINELOADER | WINESERVER | WINEDLLPATH | \
+     WINEDLLOVERRIDES | WINEMSYNC | NOTPROTON_*)
+      return 0 ;;
+  esac
+  return 1
+}
+
 np_feat_dir="$np_support/plugins"
 np_feat_log() {
   echo "=== $* ===" >> "$log" 2>&1 || true
@@ -2512,12 +2524,10 @@ while IFS= read -r np_feat_key; do
       np_feat_log "$np_feat_key skips env ${np_feat_env%%=*} as it isn't a valid variable name"
       continue
     fi
-    case "${np_feat_env%%=*}" in
-      (DYLD_* | PATH | CX_ROOT | CX_HOME | WINE* | STEAM_COMPAT_* | STEAM_DYLD_INSERT_LIBRARIES | \
-       NOTPROTON_FEATURE_DYLIBS | NOTPROTON_GAME_CWD | NOTPROTON_OVERLAY_SHIM)
-        np_feat_log "$np_feat_key skips env ${np_feat_env%%=*} as the compat_run script sets it"
-        continue ;;
-    esac
+    if np_env_reserved "${np_feat_env%%=*}"; then
+      np_feat_log "$np_feat_key skips env ${np_feat_env%%=*} as the compat_run script sets it"
+      continue
+    fi
     np_feat_rest=${np_feat_env#*=}
     # shellcheck disable=SC2088 # a literal tilde is what is being matched
     case "$np_feat_rest" in
@@ -2569,13 +2579,11 @@ done
 np_env_passed=$(env | LC_ALL=C sed -nE 's/^NOTPROTON_ENV_([A-Za-z_][A-Za-z0-9_]*)=.*/\1/p' \
   | LC_ALL=C sort)
 for name in $np_env_passed; do
-  case "$name" in
-    (DYLD_* | PATH | HOME | CX_ROOT | CX_HOME | STEAM_COMPAT_* | STEAM_DYLD_INSERT_LIBRARIES | \
-     WINEPREFIX | WINELOADER | WINESERVER | WINEDLLPATH | WINEDLLOVERRIDES | WINEMSYNC | NOTPROTON_*)
-      echo "=== NOTPROTON_ENV_$name would replace a setting this launch sets itself, ignored ===" \
-        >> "$log" 2>&1 || true
-      continue ;;
-  esac
+  if np_env_reserved "$name"; then
+    echo "=== NOTPROTON_ENV_$name would replace a setting this launch sets itself, ignored ===" \
+      >> "$log" 2>&1 || true
+    continue
+  fi
   eval "value=\$NOTPROTON_ENV_$name"
   set -- --env "$name=$value" "$@"
   echo "=== NOTPROTON_ENV_$name sets $name ===" >> "$log" 2>&1 || true

@@ -9,9 +9,9 @@ conf=$(awk '/^np_conf_normalise\(\) \(/ { f = 1 }
             f { print }
             /^np_conf_log\(\) \{/ { g = 1 }
             g && /^}$/ { exit }' "$SRC")
-block=$(sed -n '/^np_feat_dir=/,/^NP_FEAT_LIST$/p' "$SRC")
+block=$(sed -n '/^np_env_reserved() {/,/^}$/p; /^np_feat_dir=/,/^NP_FEAT_LIST$/p' "$SRC")
 case "$conf$block" in
-  *np_conf_normalise*np_feat_stage*np_feat_over*) ;;
+  *np_conf_normalise*np_env_reserved*np_feat_stage*np_feat_over*) ;;
   *) echo "FAIL: the plugin loop was not found in $SRC"; exit 1 ;;
 esac
 
@@ -255,6 +255,19 @@ env = DXVK_HUD=1
 EOF
 out=$(run NOTPROTON_RES=1)
 ok "env cannot replace what the launcher sets" "$(line "$out" 3)|$(line "$out" 4)" "DXVK_HUD=1|"
+
+# The same names NOTPROTON_ENV_ is kept from, and no others: envpasscheck holds that side.
+reset
+conf 10-same.conf <<EOF
+[NOTPROTON_SAME]
+label = Same
+env = HOME=/elsewhere
+env = NOTPROTON_ANYTHING=1
+env = WINEDEBUG=+loaddll
+EOF
+out=$(run NOTPROTON_SAME=1)
+ok "env is kept from HOME and NOTPROTON_ as NOTPROTON_ENV_ is, and Wine's own settings pass" \
+  "$(line "$out" 3)|$(line "$out" 4)" "WINEDEBUG=+loaddll|"
 
 reset
 mkdir -p "$sys32/dxgi.dll"

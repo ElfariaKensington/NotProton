@@ -75,7 +75,7 @@ in both directories.
 | `depends` | once | | another plugin's id. Hidden until that one is on, and indented under it |
 | `requires` | append, max 4 | | a file, absolute or relative to `$HOME`; the first that exists wins |
 | `inject` | once | | `1` loads what `requires` found into the game |
-| `env` | append, max 16 | | `NAME=VALUE`, exported for the game; `NAME` is `[A-Z_][A-Z0-9_]*` |
+| `env` | append, max 16 | | `NAME=VALUE`, exported for the game; `NAME` is `[A-Z_][A-Z0-9_]*`. A name the launch sets itself is skipped at launch, the same names `NOTPROTON_ENV_` is kept from |
 | `overrides` | once | | appended to `WINEDLLOVERRIDES` |
 | `stage` | once | | a folder whose files are copied into the prefix's `system32` |
 | `type` | once | | `choice` or `slider`; a toggle without one |
