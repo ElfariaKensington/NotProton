@@ -2192,8 +2192,8 @@
       "localizations" : {
         "it" : {
           "stringUnit" : {
-            "state" : "new",
-            "value" : "Copying your files…"
+            "state" : "translated",
+            "value" : "Copia dei tuoi file…"
           }
         },
         "zh-Hans" : {
@@ -2915,8 +2915,8 @@
       "localizations" : {
         "it" : {
           "stringUnit" : {
-            "state" : "new",
-            "value" : "Finishing…"
+            "state" : "translated",
+            "value" : "Ultimi passaggi…"
           }
         },
         "zh-Hans" : {
@@ -3942,8 +3942,8 @@
       "localizations" : {
         "it" : {
           "stringUnit" : {
-            "state" : "new",
-            "value" : "NotProton is rebuilding the prefix for %@."
+            "state" : "translated",
+            "value" : "NotProton sta ricostruendo il prefisso di %@."
           }
         },
         "zh-Hans" : {
@@ -3958,8 +3958,8 @@
       "localizations" : {
         "it" : {
           "stringUnit" : {
-            "state" : "new",
-            "value" : "NotProton is rebuilding this game's prefix."
+            "state" : "translated",
+            "value" : "NotProton sta ricostruendo il prefisso di questo gioco."
           }
         },
         "zh-Hans" : {
@@ -4486,8 +4486,8 @@
       "localizations" : {
         "it" : {
           "stringUnit" : {
-            "state" : "new",
-            "value" : "Rebuilding the prefix"
+            "state" : "translated",
+            "value" : "Ricostruzione del prefisso"
           }
         },
         "zh-Hans" : {
@@ -4502,8 +4502,8 @@
       "localizations" : {
         "it" : {
           "stringUnit" : {
-            "state" : "new",
-            "value" : "Rebuilding…"
+            "state" : "translated",
+            "value" : "Ricostruzione…"
           }
         },
         "zh-Hans" : {
