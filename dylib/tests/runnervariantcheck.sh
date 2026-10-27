@@ -56,11 +56,6 @@ ok "a variant that is not installed falls back" "$(resolve 'notinstalled')" "$ba
 ok "a name with a slash is refused" "$(resolve '../../etc')" "$base"
 ok "a name with a space is refused" "$(resolve 'bad name')" "$base"
 
-# What install-dxmt.sh produced before descriptors existed still resolves.
-prebuilt="$work/runners/crossover-26.3-prebuilt/CrossOver"
-mkdir -p "$prebuilt/lib/wine"
-ok "a runner built by hand is still used" "$(resolve 'prebuilt')" "$prebuilt"
-
 echo "== a descriptor builds the runner"
 mkdir -p "$work/trees/one/x86_64-windows" "$work/trees/one/x86_64-unix"
 dll "$work/trees/one/x86_64-windows/d3d11.dll" one
@@ -71,7 +66,7 @@ variant = Backend
 src     = trees/one
 dst     = lib/dxmt
 CONF
-built="$work/runners/crossover-26.3-one/CrossOver"
+built="$work/runners/crossover-26.3+one/CrossOver"
 ok "the variant runner is used" "$(resolve 'one')" "$built"
 ok "the tree is copied in" "$(cat "$built/lib/dxmt/x86_64-windows/d3d11.dll" | tr -d '\000')" \
   "Wine builtin DLLone"
@@ -93,7 +88,16 @@ ok "the runner is used" "$(resolve 'one')" "$built"
 ok "the new tree is copied in" "$(cat "$built/lib/dxmt/x86_64-windows/d3d11.dll" | tr -d '\000')" \
   "Wine builtin DLLtwotwotwo"
 ok "the rebuild is a fresh clone" "$([ -f "$marker" ] || echo gone)" "gone"
-logged "the build is reported" "building crossover-26.3-one"
+logged "the build is reported" "building crossover-26.3+one"
+
+echo "== a re-patched base runner rebuilds the variant"
+: > "$marker"
+mkdir -p "$base/lib/wine/x86_64-windows"
+dll "$base/lib/wine/x86_64-windows/ntdll.dll" patched
+ok "the runner is used" "$(resolve 'one')" "$built"
+ok "the variant was rebuilt from the updated base" "$([ -f "$marker" ] || echo gone)" "gone"
+ok "the updated base ntdll is in the variant" \
+  "$(tr -d '\000' < "$built/lib/wine/x86_64-windows/ntdll.dll")" "Wine builtin DLLpatched"
 
 echo "== a rebuild can be forced"
 : > "$marker"
@@ -166,7 +170,7 @@ variant = Backend
 src = trees/both
 dst = lib/dxmt
 CONF
-bothruns="$work/runners/crossover-26.3-bothslots/CrossOver"
+bothruns="$work/runners/crossover-26.3+bothslots/CrossOver"
 ok "a tree carrying both architectures is used" "$(resolve 'bothslots')" "$bothruns"
 ok "the slot this runner has is laid down" \
   "$(tr -d '\000' < "$bothruns/lib/dxmt/x86_64-windows/d3d11.dll")" "Wine builtin DLLbothbothboth"
@@ -182,7 +186,7 @@ echo "== a runner holding both slots takes only the one it runs"
 mkdir -p "$base/lib/dxmt/aarch64-windows"
 ok "an x86_64 tree is still used where x86_64 is what runs" "$(resolve 'one' '' rosetta)" "$built"
 ok "and is refused where arm64 Wine runs" "$(resolve 'one' '' fex)" "$base"
-logged "which says what the runner runs" "has nothing for aarch64, which is what this runner runs"
+logged "which says what the runner runs" "has nothing for aarch64 that lands in this runner"
 ok "a tree carrying both is used either way" "$(resolve 'bothslots' 1 fex)" "$bothruns"
 ok "and the slot that runner runs is laid down once the runner has it" \
   "$(tr -d '\000' < "$bothruns/lib/dxmt/aarch64-windows/d3d11.dll")" "Wine builtin DLLarmarmarm"
@@ -192,6 +196,13 @@ ok "and the slot that runner runs is laid down once the runner has it" \
 : > "$work/log"
 ok "an already built variant is re-checked, not waved through" "$(resolve 'one' '' fex)" "$base"
 logged "and says so again" "has nothing for aarch64"
+# Hidden files and empty arch directories are ignored.
+: > "$work/log"
+mkdir -p "$work/trees/one/aarch64-windows"
+printf 'junk\n' > "$work/trees/one/aarch64-windows/.DS_Store"
+ok "an arch folder holding only .DS_Store does not satisfy that arch" \
+  "$(resolve 'one' '' fex)" "$base"
+rmdir "$work/trees/one/aarch64-windows" 2>/dev/null || rm -rf "$work/trees/one/aarch64-windows"
 # A tree naming no architecture is not filtered: dst may be a flat directory.
 : > "$work/log"
 mkdir -p "$work/trees/flat"
@@ -203,10 +214,9 @@ src = trees/flat
 dst = lib/dxmt
 CONF
 ok "a tree naming no architecture is left alone" \
-  "$(resolve 'flat' '' fex)" "$work/runners/crossover-26.3-flat/CrossOver"
+  "$(resolve 'flat' '' fex)" "$work/runners/crossover-26.3+flat/CrossOver"
 
-# A tree naming no architecture skips the arch check, so the build-time "nothing landed"
-# refusal is what catches one the runner has no directory for.
+# A tree naming no architecture skips the arch check, but still has to land somewhere.
 : > "$work/log"
 mkdir -p "$work/trees/nowhere/sub"
 dll "$work/trees/nowhere/sub/plain.dll" nowhere
@@ -217,7 +227,7 @@ src = trees/nowhere
 dst = lib/dxmt
 CONF
 ok "a tree the runner has no directory for falls back" "$(resolve 'nowhere')" "$base"
-logged "and says nothing landed" "nothing in nowhere belongs in this runner"
+logged "and says nothing landed" "nowhere has nothing for x86_64 that lands in this runner"
 
 echo "== combinations"
 mkdir -p "$work/trees/other/x86_64-windows"
@@ -228,7 +238,7 @@ variant = Backend
 src = trees/other
 dst = lib/dxmt
 CONF
-both="$work/runners/crossover-26.3-one-other/CrossOver"
+both="$work/runners/crossover-26.3+one+other/CrossOver"
 ok "two variants build one runner" "$(resolve 'one+other')" "$both"
 ok "the first tree is in it" "$(cat "$both/lib/dxmt/x86_64-windows/d3d11.dll" | tr -d '\000')" \
   "Wine builtin DLLtwotwotwo"
@@ -244,9 +254,42 @@ logged "and the rest is reported" "ignoring gone, which cannot be used"
 ok "a request of nothing but unusable names falls back" "$(resolve 'gone+typo')" "$base"
 # The runner is named for what went into it, not for what was asked for.
 ok "the runner is named for the members that worked" \
-  "$([ -d "$work/runners/crossover-26.3-one-gone" ] || echo absent)" "absent"
-# And a prebuilt runner is still reachable when nothing in the request has a descriptor.
-ok "a prebuilt runner still resolves beside descriptors" "$(resolve 'prebuilt')" "$prebuilt"
+  "$([ -d "$work/runners/crossover-26.3+one+gone" ] || echo absent)" "absent"
+
+echo "== names"
+mkdir -p "$work/trees/under/x86_64-windows"
+dll "$work/trees/under/x86_64-windows/d3d11.dll" under
+desc dxmt_dev <<CONF
+src = trees/under
+dst = lib/dxmt
+CONF
+ok "an id with an underscore is used, as the panel offers it" "$(resolve 'dxmt_dev')" \
+  "$work/runners/crossover-26.3+dxmt_dev/CrossOver"
+# Build ids carry "-" too (26.3-fex is a build), so a variant named fex must not land on it.
+fexbase="$work/runners/crossover-26.3-fex/CrossOver"
+mkdir -p "$fexbase/lib/wine"
+: > "$fexbase/lib/wine/the-fex-build"
+desc fex <<CONF
+src = trees/under
+dst = lib/dxmt
+CONF
+ok "a variant named like another build gets its own runner" "$(resolve 'fex')" \
+  "$work/runners/crossover-26.3+fex/CrossOver"
+ok "and the build it is named like is untouched" "$([ -f "$fexbase/lib/wine/the-fex-build" ] && echo kept)" "kept"
+
+echo "== two launches at once"
+: > "$work/log"
+dll "$work/trees/one/x86_64-windows/d3d11.dll" racerace
+resolve 'one' > "$work/race1" &
+resolve 'one' > "$work/race2" &
+wait
+ok "both get the runner" "$(cat "$work/race1")|$(cat "$work/race2")" "$built|$built"
+ok "it holds the tree both asked for" \
+  "$(tr -d '\000' < "$built/lib/dxmt/x86_64-windows/d3d11.dll")" "Wine builtin DLLracerace"
+ok "it was built once" "$(grep -c 'building crossover-26.3+one ' "$work/log")" "1"
+left=0
+for f in "$work/runners"/.*.new "$work/runners"/.*.old; do [ ! -e "$f" ] || left=$((left + 1)); done
+ok "no scratch is left behind" "$left" "0"
 
 echo "== a live runner is left alone"
 : > "$work/log"

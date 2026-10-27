@@ -168,11 +168,28 @@ label = Child
 depends = NOTPROTON_PARENT
 overrides = child=n
 EOF
+conf 30-choice-parent.conf <<EOF
+[NOTPROTON_CHOICE_PARENT]
+label = Mode
+type = choice
+choice = fast = Fast
+choice = quality = Quality
+EOF
+conf 40-choice-child.conf <<EOF
+[NOTPROTON_CHOICE_CHILD]
+label = Fast extra
+depends = NOTPROTON_CHOICE_PARENT
+overrides = fastchild=n
+EOF
 out=$(run NOTPROTON_PARENT=1 NOTPROTON_CHILD=1)
 ok "the first existing requires is injected" "$(line "$out" 2)" "$work/lib/feat.dylib"
 ok "a child of an active parent applies" "$(line "$out" 1)" "steamclient=n;lsteamclient=b;child=n"
 out=$(run NOTPROTON_CHILD=1)
 ok "a child of a parent switched off does not" "$(line "$out" 1)" "steamclient=n;lsteamclient=b"
+out=$(run NOTPROTON_CHOICE_PARENT=quality NOTPROTON_CHOICE_CHILD=1)
+ok "a child of a choice parent holding a value applies" "$(line "$out" 1)" "steamclient=n;lsteamclient=b;fastchild=n"
+out=$(run NOTPROTON_CHOICE_CHILD=1)
+ok "a child of a choice parent on Default does not" "$(line "$out" 1)" "steamclient=n;lsteamclient=b"
 rm -f "$work/lib/feat.dylib"
 out=$(run NOTPROTON_PARENT=1 NOTPROTON_CHILD=1)
 ok "nor does a child of a parent not installed" "$(line "$out" 1)|$(line "$out" 2)" "steamclient=n;lsteamclient=b|"

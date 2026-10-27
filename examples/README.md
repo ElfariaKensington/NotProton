@@ -24,9 +24,7 @@ are missing still appears, greyed out as "(not installed)".
 
 The toggles work as they are, once `requires` points at something real. The dropdowns and
 sliders write their value into the game's launch options, and a launch option named
-`NOTPROTON_ENV_FOO=bar` reaches the game as `FOO=bar` once
-[#219](https://github.com/NotProtonNot/NotProton/pull/219) lands; until then they show the
-UI without changing the game.
+`NOTPROTON_ENV_FOO=bar` reaches the game as `FOO=bar`.
 
 ## Plugin fields
 
@@ -70,14 +68,18 @@ may only be given once, an empty value, a missing `label`.
 | `choice` | repeatable, up to 16. `<value> = <label>`, split on the first `=`; with no label the value is its own. |
 | `min`, `max` | the range of a slider. `max` has to be the larger. |
 | `step` | what the handle moves by. |
-| `default` | where the handle sits while the launch option is unset, and the value that clears it again. On a snapping slider it has to be one of the declared values. |
+| `default` | where the handle sits while the launch option is unset, and the value that clears it again. On a snapping slider it has to be one of the declared values; on a range slider it has to be inside the range. |
 | `suffix` | drawn after a range slider's value, joined on with no space: `x` reads `1.25x`. |
 
 A row that cannot be drawn is refused rather than half-drawn, and says why in
 `~/Library/Application Support/notproton/notproton.log`: a slider with no range, a
-range whose `max` is not larger than its `min`, a `step` or `default` that is not a
-number, a snapping slider with one value or a `default` that is not one of them, a
+range whose `max` is not larger than its `min`, a `step` that is not a number above
+zero, a `default` that is not a number in the range, a snapping slider with one value or a `default` that is not one of them, a
 `choice` with no values, or a `type` that does not exist.
+
+A dropdown on Default and a slider at its `default` write nothing, so a row like that only
+does its `inject`, `env`, `stage` or `overrides`, and only shows the rows that depend on
+it, while it holds some other value.
 
 ## Variant fields
 

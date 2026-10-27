@@ -55,10 +55,10 @@ static void make_dir(const char *fmt, const char *a, const char *b) {
     if (system(cmd) != 0) { shout("cannot run %s", cmd); g_failed++; }
 }
 
-static char *vars_json(void) {
+static const char *vars_json(void) {
     g_var_done = 0;
     var_build();
-    return g_var_rows;
+    return input_text(IN_VARS);
 }
 
 static void clear_vars(void) {
@@ -88,8 +88,8 @@ static void rebuild(void) {
     feat_build();
 }
 
-static char *ready_json(void) { rebuild(); return g_feat_ready; }
-static char *feats_json(void) { rebuild(); return g_feat_rows; }
+static const char *ready_json(void) { rebuild(); return input_text(IN_READY); }
+static const char *feats_json(void) { rebuild(); return input_text(IN_FEATS); }
 
 int main(void) {
     char tmpl[] = "/tmp/np-featcheck.XXXXXX";
@@ -210,30 +210,32 @@ int main(void) {
     write_desc("10-vt.conf", "[NOTPROTON_VT]\nlabel\v=\fVt\n");
     ok(strstr(feats_json(), "k:\"NOTPROTON_VT\"") != NULL, "any blank counts as space");
     clear_descs();
-    for (int i = 0; i < NP_FEAT_MAX; i++) {
+    for (int i = 0; i < NP_CONF_RECORDS_MAX; i++) {
         char name[32], body[2048], fill[600];
         memset(fill, '"', sizeof(fill));
         snprintf(name, sizeof(name), "%02d.conf", i);
         snprintf(body, sizeof(body),
                  "[NOTPROTON_%0180d]\nlabel = %.190s\ndescription = %.510s\n"
-                 "on = %.31s\noff = %.31s\ndepends = %.190s\n",
-                 i, fill, fill, fill, fill, fill);
+                 "on = %.31s\noff = %.31s\ndepends = NOTPROTON_%0180d\n",
+                 i, fill, fill, fill, fill, (i + 1) % NP_CONF_RECORDS_MAX);
         write_desc(name, body);
     }
     {
         const char *j = feats_json();
         int rows = 0;
         for (const char *p = j; (p = strstr(p, "{k:")); p++) rows++;
-        ok(rows == NP_FEAT_MAX, "the most plugins at their longest all render");
+        ok(rows == NP_CONF_RECORDS_MAX, "the most plugins at their longest all render");
     }
 
     puts("== a transform");
     rebuild();
+    vars_json();
     {
         size_t len = 0;
         free(np_webpatch_transform((const uint8_t *)"x", 1, &len, NULL));
     }
     ok(!g_feat_ready_done, "reads the plugins again");
+    ok(!g_var_done, "and reads the variants again");
 
     puts("== an optional description");
     clear_descs();
@@ -246,6 +248,12 @@ int main(void) {
     write_desc("10-e.conf", "[NOTPROTON_E]\nlabel = Ee\nsection = dev\n");
     ok(strstr(feats_json(), "d:\"\"") != NULL,
        "is empty when the plugin omits it");
+    clear_descs();
+    write_desc("10-longon.conf",
+               "[NOTPROTON_LONGON]\nlabel = Long on\n"
+               "on = 0123456789012345678901234567890123\n");
+    ok(strstr(feats_json(), "on:\"0123456789012345678901234567890123\"") != NULL,
+       "keeps a long on value intact");
 
     puts("== a choice row");
     clear_descs();
@@ -253,12 +261,17 @@ int main(void) {
                "[NOTPROTON_ENV_HUD_POS]\nlabel = HUD position\nsection = dev\n"
                "type = choice\n"
                "choice = tl = Top left\nchoice = tr = Top right\nchoice = br\n");
+    write_desc("20-empty-ch.conf",
+               "[NOTPROTON_ENV_EMPTY_CH]\nlabel = Empty\n"
+               "type = choice\nchoice = = Missing value\n");
     {
         const char *j = feats_json();
         // The whole tail, so a mis-counted literal cannot drop a bracket and still pass.
         ok(strstr(j, ",ty:\"choice\",ch:[{v:\"tl\",l:\"Top left\"},"
                      "{v:\"tr\",l:\"Top right\"},{v:\"br\",l:\"br\"}]}") != NULL,
            "is marked as a choice, splits value from label, and defaults a missing label");
+        ok(strstr(j, "NOTPROTON_ENV_EMPTY_CH") == NULL,
+           "and refuses a choice with an empty value before '='");
     }
 
     puts("== a slider snapped to declared values");
@@ -295,14 +308,20 @@ int main(void) {
                             "type = slider\nmin = 1\nmax = 1\n");
     write_desc("10-c.conf", "[NOTPROTON_C]\nlabel = Cee\nsection = dev\n"
                             "type = slider\nmin = 0\nmax = 1\nstep = fast\n");
+    write_desc("10-c2.conf", "[NOTPROTON_C2]\nlabel = Cee2\nsection = dev\n"
+                             "type = slider\nmin = 0\nmax = 1\nstep = 0\n");
     write_desc("10-d2.conf", "[NOTPROTON_D2]\nlabel = Dee\nsection = dev\n"
                              "type = slider\nmin = 0\nmax = 1px\n");
+    write_desc("10-d3.conf", "[NOTPROTON_D3]\nlabel = Dee3\nsection = dev\n"
+                             "type = slider\nmin = 0\nmax = 1\ndefault = 2\n");
     {
         const char *j = feats_json();
         ok(strstr(j, "NOTPROTON_A") == NULL, "no min is refused");
         ok(strstr(j, "NOTPROTON_B") == NULL, "an empty range is refused");
         ok(strstr(j, "NOTPROTON_C") == NULL, "a step that is not a number is refused");
-        ok(strstr(j, "NOTPROTON_D2") == NULL, "and so is a bound with trailing text");
+        ok(strstr(j, "NOTPROTON_C2") == NULL, "a non-positive step is refused");
+        ok(strstr(j, "NOTPROTON_D2") == NULL, "a bound with trailing text is refused");
+        ok(strstr(j, "NOTPROTON_D3") == NULL, "and a default outside the range is refused");
     }
 
     puts("== a slider row");
@@ -320,6 +339,20 @@ int main(void) {
                "type = slider\nmin = 0\nmax = 1\n");
     ok(strstr(feats_json(), ",ty:\"slider\",mn:0,mx:1}") != NULL,
        "and leaves out a step, default and suffix it was not given");
+    clear_descs();
+    write_desc("10-sl.conf",
+               "[NOTPROTON_ENV_BIG]\nlabel = Big\ntype = slider\n"
+               "min = 1000000\nmax = 1000000.5\nstep = 0.1\ndefault = 100000025e-2\n");
+    ok(strstr(feats_json(), ",mn:1000000,mx:1000000.5,st:0.1,df:1000000.25") != NULL,
+       "keeps every digit a value has, and no more");
+    clear_descs();
+    write_desc("10-inf.conf",
+               "[NOTPROTON_ENV_INF]\nlabel = Inf\ntype = slider\nmin = 0\nmax = 1e999\n");
+    ok(strcmp(feats_json(), "[]") == 0,
+       "a bound too large to be a number is refused, not written into the page as inf");
+    clear_descs();
+    write_desc("10-dep.conf", "[NOTPROTON_DEP]\nlabel = Dep\ndepends = == x.conf\n");
+    ok(strcmp(feats_json(), "[]") == 0, "a depends that is not a plugin id is refused");
 
     puts("== a row with no type, or one that does not exist");
     clear_descs();

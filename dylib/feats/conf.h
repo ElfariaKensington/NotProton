@@ -9,6 +9,7 @@
 #define NP_CONF_LINE     2048
 #define NP_CONF_ID_MAX    192
 #define NP_CONF_REC_BUF  4096   // a record's fields, names and values together
+#define NP_CONF_RECORDS_MAX 32  // per directory, counted across its files
 
 typedef enum { NP_CONF_PLUGIN, NP_CONF_VARIANT } np_conf_kind;
 
@@ -25,10 +26,14 @@ int np_conf_next(const np_conf_rec_t *rec, int *iter, const char **name, const c
 // The first value of a field, or NULL. Fields that may repeat have more than one.
 const char *np_conf_get(const np_conf_rec_t *rec, const char *name);
 int np_conf_count(const np_conf_rec_t *rec, const char *name);
+// Whether a value is a number in the grammar's sense, which is finite as well.
+int np_conf_num(const char *v);
+// The length of a choice's value, and its label, or NULL when it names none.
+size_t np_conf_choice(const char *v, const char **label);
 
 typedef struct {
-    // A record that passed the grammar and its own schema. Returning a code refuses it,
-    // which is how directory-wide rules (a repeated id, the record limit) are applied.
+    // A record that passed the grammar, its own schema, and the directory's rules (a
+    // repeated id, the record limit). Returning a code refuses it all the same.
     const char *(*record)(const np_conf_rec_t *rec, void *ctx, const char **detail);
     // A file or a record that was refused. scope is a path or an id.
     void (*refused)(const char *scope, const char *code, const char *detail, void *ctx);
@@ -36,8 +41,6 @@ typedef struct {
     void (*file)(const char *path, void *ctx);
 } np_conf_sink_t;
 
-void np_conf_read_file(const char *path, const char *shown, np_conf_kind kind,
-                       const np_conf_sink_t *sink, void *ctx);
 // Every *.conf in dir, in LC_ALL=C name order. shown_dir prefixes the path a refusal
 // names, so a check can report where EXPECTED says rather than an absolute path.
 void np_conf_read_dir(const char *dir, const char *shown_dir, np_conf_kind kind,

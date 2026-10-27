@@ -48,6 +48,7 @@ SRCS := \
 	dylib/feats/compatpage.c \
 	dylib/feats/prefixstate.c \
 	dylib/feats/usershortcuts.c \
+	dylib/feats/conf.c \
 	dylib/feats/webpatch.c \
 	dylib/feats/nativeplatform.c \
 	dylib/feats/input_access.c \
@@ -270,7 +271,7 @@ CONFDUMP      := $(OUT_DIR)/confdump
 
 $(CONFDUMP): dylib/tests/confdump.c dylib/feats/conf.c dylib/feats/conf.h
 	@mkdir -p $(dir $@)
-	$(TEST_CC) -O1 -o $@ dylib/tests/confdump.c
+	$(TEST_CC) -O1 -o $@ dylib/tests/confdump.c dylib/feats/conf.c
 
 # One corpus, both readers: webpatch.c through confdump, compat_run.sh through its own
 # normaliser. A difference between them is a difference between the panel and the launch.
@@ -337,9 +338,9 @@ FEATCHECK         := $(OUT_DIR)/featcheck
 WEBPATCH_FIXTURES := dylib/tests/webpatch-fixtures
 
 $(GATECHECK): dylib/tests/gatecheck.c dylib/feats/webpatch.c dylib/feats/webpatch.h \
-              dylib/util/file.c
+              dylib/feats/conf.c dylib/feats/conf.h dylib/util/file.c
 	@mkdir -p $(dir $@)
-	$(TEST_CC) -O1 -o $@ dylib/tests/gatecheck.c dylib/util/file.c
+	$(TEST_CC) -O1 -o $@ dylib/tests/gatecheck.c dylib/feats/conf.c dylib/util/file.c
 
 NATIVEPLATFORMCHECK := $(OUT_DIR)/nativeplatformcheck
 
@@ -351,7 +352,7 @@ $(FEATCHECK): dylib/tests/featcheck.c dylib/feats/webpatch.c dylib/feats/webpatc
               dylib/feats/conf.c dylib/feats/conf.h \
               dylib/util/file.c
 	@mkdir -p $(dir $@)
-	$(TEST_CC) -O1 -o $@ dylib/tests/featcheck.c dylib/util/file.c
+	$(TEST_CC) -O1 -o $@ dylib/tests/featcheck.c dylib/feats/conf.c dylib/util/file.c
 
 featcheck:
 	@if [ ! -f dylib/tests/featcheck.c ]; then \
@@ -458,7 +459,7 @@ panel-behavior:
 		echo "==> panel-behavior: node not found, skipped"; exit 0; fi; \
 	mkdir -p $(OUT_DIR) && \
 	$(TEST_CC) -O1 -o $(OUT_DIR)/panel-emit \
-	  $(PANEL_TESTS)/emit.c dylib/util/file.c && \
+	  $(PANEL_TESTS)/emit.c dylib/feats/conf.c dylib/util/file.c && \
 	node $(PANEL_TESTS)/behavior.js $(OUT_DIR)/panel-emit && \
 	node $(PANEL_TESTS)/switching.js $(OUT_DIR)/panel-emit && \
 	node $(PANEL_TESTS)/launch-options.js $(OUT_DIR)/panel-emit && \

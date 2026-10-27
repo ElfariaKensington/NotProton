@@ -173,13 +173,13 @@ np_conf_normalise() (
   # newline is skipped rather than normalised: either would break the lines below.
   np_conf_names=$(
     for np_conf_file in "$np_conf_dir"/*.conf; do
+      case ${np_conf_file##*/} in
+        (*'	'*) continue ;;
+      esac
       if [ -f "$np_conf_file" ] && [ ! -r "$np_conf_file" ]; then
         printf '!\t%s\tunreadable\n' "${np_conf_file##*/}" >&2
       fi
       [ -f "$np_conf_file" ] && [ -r "$np_conf_file" ] || continue
-      case ${np_conf_file##*/} in
-        (*'	'*) continue ;;
-      esac
       printf '%s\n' "${np_conf_file##*/}"
     done | LC_ALL=C sort
   )
@@ -194,7 +194,10 @@ NP_CONF_NAMES
   [ "$#" -gt 0 ] || return 0
   LC_ALL=C awk -v kind="$np_conf_kind" -v shown="$np_conf_shown" '
   function trim(s) { gsub(/^[ \t\r\n\v\f]+|[ \t\r\n\v\f]+$/, "", s); return s }
-  function isnum(s) { return s ~ /^[+-]?([0-9]+(\.[0-9]*)?|\.[0-9]+)([eE][+-]?[0-9]+)?$/ }
+  function isnum(s) {
+    return s ~ /^[+-]?([0-9]+(\.[0-9]*)?|\.[0-9]+)([eE][+-]?[0-9]+)?$/ \
+      && s + 0 <= 1.7976931348623157e308 && s + 0 >= -1.7976931348623157e308
+  }
   function idok(s,   i, c) {
     if (length(s) >= 192 || s == "") return 0
     if (kind == "plugin") {
@@ -221,8 +224,11 @@ NP_CONF_NAMES
       }
       return ""
     }
-    for (i = 1; i <= nkv; i++)
+    for (i = 1; i <= nkv; i++) {
       if (names[i] == "env" && !envok(vals[i])) { detail = "env"; return "bad-value" }
+      if (names[i] == "choice" && choiceval(vals[i]) == "") { detail = "choice"; return "bad-value" }
+    }
+    if (("depends" in cnt) && !idok(first["depends"])) { detail = "depends"; return "bad-value" }
     if (("section" in cnt) && first["section"] != "dev") { detail = "section"; return "bad-value" }
     if (!("type" in cnt)) return ""
     t = first["type"]
@@ -242,12 +248,18 @@ NP_CONF_NAMES
     }
     if (!isnum(first["min"])) { detail = "min"; return "bad-value" }
     if (!isnum(first["max"]) || first["max"] + 0 <= first["min"] + 0) { detail = "max"; return "bad-value" }
-    if (st && !isnum(first["step"])) { detail = "step"; return "bad-value" }
-    if (df && !isnum(first["default"])) return "bad-default"
+    if (st && (!isnum(first["step"]) || first["step"] + 0 <= 0)) { detail = "step"; return "bad-value" }
+    if (df && (!isnum(first["default"]) || first["default"] + 0 < first["min"] + 0 || first["default"] + 0 > first["max"] + 0))
+      return "bad-default"
     return ""
   }
+  # Clears a record, refused or not, so nothing it held reaches the next one.
+  function reset() {
+    id = ""; code = ""; detail = ""; nkv = 0; bytes = 0
+    split("", cnt); split("", first)
+  }
   function flush(   i, c) {
-    if (id == "") return
+    if (id == "") { reset(); return }
     c = code
     if (c == "") { detail = ""; c = schema() }
     if (c == "") {
@@ -255,10 +267,10 @@ NP_CONF_NAMES
       else if (records >= 32) { c = "limit"; detail = "" }
       else { seen[id] = 1; records++ }
     }
-    if (c != "") refuse(id, c, detail)
+    # conf.c holds 191 bytes of an id and 63 of a field name, and names them that way.
+    if (c != "") refuse(substr(id, 1, 191), c, substr(detail, 1, 63))
     else for (i = 1; i <= nkv; i++) printf "%s\t%s\t%s\n", id, names[i], vals[i]
-    id = ""; code = ""; detail = ""; nkv = 0; bytes = 0
-    split("", cnt); split("", first)
+    reset()
   }
   function startfile(   base) {
     base = FILENAME
@@ -283,7 +295,7 @@ NP_CONF_NAMES
   FNR == 1 { flush(); startfile() }
   dropped { next }
   {
-    if (length($0) >= 2048) { id = ""; refuse(path, "line-too-long", ""); dropped = 1; next }
+    if (length($0) >= 2048) { reset(); refuse(path, "line-too-long", ""); dropped = 1; next }
     k = $0
     sub(/^[ \t\r\n\v\f]+/, "", k)
     if (k == "" || substr(k, 1, 1) == "#") next
@@ -294,12 +306,13 @@ NP_CONF_NAMES
       flush()
       header = 1
       id = trim(substr(k, 2, cl - 2))
-      if (!idok(id)) { code = "bad-id"; detail = "" }
+      if (id == "") refuse(path, "bad-id", "")
+      else if (!idok(id)) { code = "bad-id"; detail = "" }
       next
     }
     eq = index(k, "=")
     if (!eq) next
-    if (!header) { id = ""; refuse(path, "no-header", ""); dropped = 1; next }
+    if (!header) { reset(); refuse(path, "no-header", ""); dropped = 1; next }
     if (code != "") next
     name = trim(substr(k, 1, eq - 1))
     val = trim(substr(k, eq + 1))
@@ -333,6 +346,17 @@ np_conf_ids() {
 np_conf_has() {
   printf '%s\n' "$1" | awk -F'\t' -v i="$2" '$1 == i { found = 1 } END { exit !found }'
 }
+# A path a descriptor names: absolute, or under $HOME however it is written, as
+# resolve_home_path in webpatch.c reads it.
+np_home_path() {
+  # shellcheck disable=SC2088,SC2016
+  case "$1" in
+    (/*) printf '%s' "$1" ;;
+    ("~/"*) printf '%s/%s' "$HOME" "${1#"~/"}" ;;
+    ('$HOME/'*) printf '%s/%s' "$HOME" "${1#'$HOME/'}" ;;
+    (*) printf '%s/%s' "$HOME" "$1" ;;
+  esac
+}
 # Every refusal the reader found, logged the way the panel logs its own.
 np_conf_log() {
   printf '%s\n' "$1" | awk -F'\t' -v k="$2" '$1 == "!" {
@@ -347,7 +371,7 @@ np_conf_log() {
 # means two games can use different ones at once.
 np_variant_conf_dir="$np_support/variants"
 np_variant_used=""
-np_conf_var_table=$(np_conf_normalise "$np_variant_conf_dir" "" variant)
+np_conf_var_table=$(np_conf_normalise "$np_variant_conf_dir" "" variant) || np_conf_var_table=""
 np_conf_log "$np_conf_var_table" variants
 np_variant_say() {
   echo "=== variants: $* ===" >> "${log:-/dev/null}" 2>&1 || true
@@ -362,20 +386,37 @@ np_variant_arch() {
   esac
 }
 
-# Whether a tree has anything for the architecture this runner runs. A tree naming no
-# architecture at all is not filtered, since dst may be a flat directory.
-np_variant_fits_arch() {
+# Whether a tree has anything this runner can use, read from the top of the tree the way
+# var_fits in webpatch.c reads it: files there land in dst, and each folder lands where dst
+# has one of the same name. A folder named for an architecture only counts for the runner
+# that runs it, and a tree naming any architecture has to land one this runner runs, or
+# arm64 Wine would be handed x86_64 files and never read them.
+np_variant_fits() {
+  np_v_lands=0
   np_v_named=0
   np_v_fits=0
   np_v_want_arch=$(np_variant_arch)
-  for np_v_d in "$1"/*; do
-    [ -d "$np_v_d" ] || continue
-    np_v_d_arch=$(np_variant_dir_arch "$(basename "$np_v_d")")
+  np_v_into="$np_support/runners/crossover-$np_build/CrossOver/$2"
+  for np_v_e in "$1"/*; do
+    if [ -f "$np_v_e" ]; then
+      [ ! -d "$np_v_into" ] || np_v_lands=1
+      continue
+    fi
+    [ -d "$np_v_e" ] || continue
+    [ -n "$(find "$np_v_e" -name '.?*' -prune -o -type f -print -quit 2>/dev/null)" ] || continue
+    np_v_here=0
+    if [ -d "$np_v_into/${np_v_e##*/}" ]; then
+      np_v_here=1
+      np_v_lands=1
+    fi
+    np_v_d_arch=$(np_variant_dir_arch "${np_v_e##*/}")
     [ -n "$np_v_d_arch" ] || continue
     np_v_named=1
-    [ "$np_v_d_arch" != "$np_v_want_arch" ] || np_v_fits=1
+    if [ "$np_v_here" = 1 ] && [ "$np_v_d_arch" = "$np_v_want_arch" ]; then
+      np_v_fits=1
+    fi
   done
-  [ "$np_v_named" -eq 0 ] || [ "$np_v_fits" -eq 1 ]
+  [ "$np_v_lands" = 1 ] && { [ "$np_v_named" = 0 ] || [ "$np_v_fits" = 1 ]; }
 }
 
 # The architecture a directory in a tree is for, empty when it names none. A runner can
@@ -394,10 +435,12 @@ np_variant_dir_arch() {
 np_variant_names() {
   printf '%s' "$1" | tr '+' '\n' | grep -v '^$' | LC_ALL=C sort -u | tr '\n' ' '
 }
+# "+" joins them because no build id or variant id can hold one, so no two requests and
+# no base runner share a directory.
 np_variant_dir_name() {
   np_v_joined="crossover-$np_build"
   for np_v_n in $1; do
-    np_v_joined="$np_v_joined-$np_v_n"
+    np_v_joined="$np_v_joined+$np_v_n"
   done
   printf '%s' "$np_v_joined"
 }
@@ -412,29 +455,34 @@ np_variant_read() {
     np_variant_say "$1 has no usable descriptor"
     return 1
   fi
-  # Leading parens: a case pattern's ) can otherwise close a $( ) around this.
-  case "$np_v_src" in
-    (/*) ;;
-    (*) np_v_src="$HOME/$np_v_src" ;;
-  esac
+  np_v_src=$(np_home_path "$np_v_src")
   if [ ! -d "$np_v_src" ]; then
     np_variant_say "$1 builds from $np_v_src, which is not there"
     return 1
   fi
-  if ! np_variant_fits_arch "$np_v_src"; then
-    np_variant_say "$1 has nothing for $np_v_want_arch, which is what this runner runs, so it is refused"
+  if ! np_variant_fits "$np_v_src" "$np_v_dst"; then
+    np_variant_say "$1 has nothing for $np_v_want_arch that lands in this runner, so it is refused"
     return 1
   fi
   return 0
 }
 
 # What the variant should be made of. Rebuilding is decided by comparing this against the
-# copy recorded in the built runner, which is a handful of stat calls.
+# copy recorded in the built runner, which is a handful of stat calls. The base runner's
+# patched files are in it too, or re-patching the runner would leave variants on the old ntdll.
 np_variant_manifest() {
   for np_v_name in $1; do
     np_variant_read "$np_v_name" || return 1
     printf '%s %s\n' "$np_v_name" "$np_v_dst"
-    ( cd "$np_v_src" && find . -type f -exec stat -f '%N %z %m' {} + ) | LC_ALL=C sort
+    ( cd "$np_v_src" && find . -name '.?*' -prune -o -type f -exec stat -f '%N %z %m' {} + ) | LC_ALL=C sort
+  done
+  np_v_mbase="$np_support/runners/crossover-$np_build/CrossOver"
+  for np_v_bf in "$np_v_mbase/share/wine/wine.inf" \
+    "$np_v_mbase"/lib/wine/*-windows/ntdll.dll \
+    "$np_v_mbase"/lib/wine/*-windows/lsteamclient.dll \
+    "$np_v_mbase"/lib/wine/*-unix/lsteamclient.so; do
+    [ -f "$np_v_bf" ] || continue
+    stat -f 'base %N %d %i %z %m' "$np_v_bf" 2>/dev/null || true
   done
   return 0
 }
@@ -460,7 +508,7 @@ np_variant_overlay() {
   np_v_root="$1"
   for np_v_name in $2; do
     np_variant_read "$np_v_name" || return 1
-    ( cd "$np_v_src" && find . -type f -print ) > "$np_v_root/.np-files" || return 1
+    ( cd "$np_v_src" && find . -name '.?*' -prune -o -type f -print ) > "$np_v_root/.np-files" || return 1
     np_v_laid=0
     np_v_skipped=""
     while IFS= read -r np_v_rel; do
@@ -474,7 +522,9 @@ np_variant_overlay() {
         esac
         continue
       fi
-      cp -f "$np_v_src/$np_v_rel" "$np_v_at" || return 1
+      rm -f "$np_v_at"
+      cp -c "$np_v_src/$np_v_rel" "$np_v_at" 2>/dev/null \
+        || cp "$np_v_src/$np_v_rel" "$np_v_at" || return 1
       # A downloaded tree arrives quarantined and Gatekeeper can refuse to dlopen it.
       xattr -d com.apple.quarantine "$np_v_at" 2>/dev/null || true
       case "$np_v_rel" in
@@ -499,75 +549,74 @@ np_variant_overlay() {
 
 # Builds into a scratch directory and moves it in, so a failure leaves the previous build
 # standing and the game runs last-known-good rather than a half-written tree.
-np_variant_build() {
+# The lock is lockf's, held by a subshell, so it goes when the launch does however it ends
+# and nothing ever has to decide that a lock was left behind.
+np_variant_build() (
   np_v_target="$1"
   np_v_names="$2"
   np_v_want="$3"
   np_v_base="$np_support/runners/crossover-$np_build"
-  np_v_lock="$np_v_target.lock"
-  np_v_new="$np_v_target.new"
+  # Hidden, as the app's own scratch is, so nothing that lists runners takes these for one.
+  np_v_scratch="${np_v_target%/*}/.${np_v_target##*/}"
+  np_v_new="$np_v_scratch.new"
+  np_v_old="$np_v_scratch.old"
 
   if [ ! -d "$np_v_base/CrossOver/lib/wine" ]; then
     np_variant_say "no base runner at $np_v_base yet, so nothing can be built from it"
-    return 1
+    exit 1
+  fi
+  [ ! -L "$np_v_scratch.lock" ] || exit 1
+  exec 7>> "$np_v_scratch.lock" || exit 1
+  if ! /usr/bin/lockf -s -t 120 7; then
+    np_variant_say "another launch is still building ${np_v_target##*/}"
+    exit 1
+  fi
+  trap 'rm -rf "$np_v_new"; exit 143' TERM
+  trap 'rm -rf "$np_v_new"; exit 130' INT
+  trap 'rm -rf "$np_v_new"; exit 129' HUP
+
+  # Another launch may have built it, or started a game from it, while this one waited.
+  if [ -d "$np_v_target/CrossOver/lib/wine" ]; then
+    if [ "$(cat "$np_v_target/CrossOver/.notproton-variant" 2>/dev/null || true)" = "$np_v_want" ] \
+       && [ "${NOTPROTON_VARIANT_REBUILD:-}" != 1 ]; then
+      exit 0
+    fi
+    if np_variant_busy "$np_v_target"; then
+      np_variant_say "a game is running from ${np_v_target##*/}, leaving it as it is"
+      exit 0
+    fi
   fi
 
-  np_v_waited=0
-  while ! mkdir "$np_v_lock" 2>/dev/null; do
-    np_v_age=$(( $(date +%s) - $(stat -f %m "$np_v_lock" 2>/dev/null || date +%s) ))
-    if [ "$np_v_age" -gt 900 ]; then
-      np_variant_say "clearing a build lock left behind ${np_v_age}s ago"
-      rm -rf "$np_v_lock"
-      continue
-    fi
-    np_v_waited=$(( np_v_waited + 1 ))
-    if [ "$np_v_waited" -gt 120 ]; then
-      np_variant_say "another launch is still building $(basename "$np_v_target")"
-      return 1
-    fi
-    sleep 1
-  done
+  rm -rf "$np_v_new" "$np_v_old"
+  np_variant_say "building ${np_v_target##*/} from $np_v_names"
+  if ! { cp -c -R "$np_v_base" "$np_v_new" 2>/dev/null || cp -R "$np_v_base" "$np_v_new"; } \
+     || ! np_variant_overlay "$np_v_new" "$np_v_names" \
+     || ! printf '%s\n' "$np_v_want" > "$np_v_new/CrossOver/.notproton-variant"; then
+    rm -rf "$np_v_new"
+    np_variant_say "could not build ${np_v_target##*/}"
+    exit 1
+  fi
+  if [ -d "$np_v_target" ] && ! mv "$np_v_target" "$np_v_old"; then
+    rm -rf "$np_v_new"
+    np_variant_say "could not move the old ${np_v_target##*/} aside"
+    exit 1
+  fi
+  if ! mv "$np_v_new" "$np_v_target"; then
+    [ ! -d "$np_v_old" ] || mv "$np_v_old" "$np_v_target" || true
+    rm -rf "$np_v_new"
+    np_variant_say "could not move the new ${np_v_target##*/} in"
+    exit 1
+  fi
+  rm -rf "$np_v_old"
+  np_variant_say "built ${np_v_target##*/}"
+)
 
-  np_v_built=1
-  rm -rf "$np_v_new"
-  np_variant_say "building $(basename "$np_v_target") from $np_v_names"
-  if cp -c -R "$np_v_base" "$np_v_new" 2>/dev/null || cp -R "$np_v_base" "$np_v_new"; then
-    if np_variant_overlay "$np_v_new" "$np_v_names"; then
-      printf '%s\n' "$np_v_want" > "$np_v_new/CrossOver/.notproton-variant" \
-        && np_v_built=0
-    fi
-  fi
-  if [ "$np_v_built" = 0 ]; then
-    rm -rf "$np_v_target.old"
-    if [ -d "$np_v_target" ]; then
-      mv "$np_v_target" "$np_v_target.old" || np_v_built=1
-    fi
-    if [ "$np_v_built" = 0 ]; then
-      mv "$np_v_new" "$np_v_target" || np_v_built=1
-    fi
-    rm -rf "$np_v_target.old"
-  fi
-  [ "$np_v_built" = 0 ] || rm -rf "$np_v_new"
-  rm -rf "$np_v_lock"
-  if [ "$np_v_built" = 0 ]; then
-    np_variant_say "built $(basename "$np_v_target")"
-    return 0
-  fi
-  np_variant_say "could not build $(basename "$np_v_target")"
-  return 1
-}
-
-# Sets np_variant_root to a runner carrying the requested variants, building it when the
-# trees behind it have moved on. Returns 1 to leave the game on the base runner, so a
-# stale launch option never stops it starting.
 # One name in a request that has lost its descriptor must not take the rest with it: the
 # panel keeps a launch option a game already carries, and a game outlives a descriptor.
 np_variant_usable() {
   np_v_keep=""
   np_v_drop=""
-  np_v_declared=""
   for np_v_name in $1; do
-    [ ! -r "$np_variant_conf_dir/$np_v_name.conf" ] || np_v_declared=1
     if np_variant_read "$np_v_name"; then
       np_v_keep="$np_v_keep$np_v_name "
     else
@@ -576,25 +625,15 @@ np_variant_usable() {
   done
 }
 
+# Sets np_variant_root to a runner carrying the requested variants, building it when the
+# trees behind it have moved on. Returns 1 to leave the game on the base runner, so a
+# stale launch option never stops it starting.
 np_variant_resolve() {
   np_v_asked=$(np_variant_names "$1")
   [ -n "$np_v_asked" ] || return 1
   np_variant_usable "$np_v_asked"
   [ -z "$np_v_drop" ] || np_variant_say "ignoring ${np_v_drop% }, which cannot be used"
-
-  if [ -z "$np_v_keep" ]; then
-    # A runner built by hand still counts, which is what the install script produced
-    # before descriptors existed -- but only when nothing declared a descriptor. A
-    # descriptor that exists and was refused is an answer, not a gap to route around.
-    np_variant_root="$np_support/runners/$(np_variant_dir_name "$np_v_asked")"
-    if [ -z "$np_v_declared" ] && [ -d "$np_variant_root/CrossOver/lib/wine" ]; then
-      np_variant_say "using the prebuilt $(np_variant_dir_name "$np_v_asked")"
-      np_variant_root="$np_variant_root/CrossOver"
-      np_variant_used="$np_v_asked"
-      return 0
-    fi
-    return 1
-  fi
+  [ -n "$np_v_keep" ] || return 1
 
   np_v_sel=${np_v_keep% }
   np_variant_used="$np_v_sel"
@@ -628,7 +667,7 @@ np_variant_resolve() {
 
 CX_ROOT="$np_support/runners/crossover-$np_build/CrossOver"
 np_variant=${NOTPROTON_RUNNER_VARIANT:-}
-case "$np_variant" in *[!A-Za-z0-9.+-]*) np_variant="" ;; esac
+case "$np_variant" in *[!A-Za-z0-9._+-]*) np_variant="" ;; esac
 if [ -n "$np_variant" ]; then
   if np_variant_resolve "$np_variant"; then
     CX_ROOT="$np_variant_root"
@@ -990,6 +1029,7 @@ last_wine_build() {
   had_build=other
   had_display="another version of CrossOver"
   for inf in "$np_support"/runners/crossover-*/CrossOver/share/wine/wine.inf; do
+    [ ! -e "${inf%/share/wine/wine.inf}/.notproton-variant" ] || continue
     [ "$(stat -f %m "$inf" 2>/dev/null)" = "$updated" ] || continue
     if [ "$had_build" != other ]; then
       had_build=other
@@ -2362,7 +2402,7 @@ np_feat_log() {
 }
 # One reader for plugins and variants alike: the grammar, the limits and every refusal
 # are in np_conf_normalise, and webpatch.c is checked against the same corpus.
-np_conf_feat_table=$(np_conf_normalise "$np_feat_dir" "" plugin)
+np_conf_feat_table=$(np_conf_normalise "$np_feat_dir" "" plugin) || np_conf_feat_table=""
 np_conf_log "$np_conf_feat_table" plugins
 
 np_feat_first() {
@@ -2371,10 +2411,7 @@ np_feat_first() {
 # The first file a plugin names that is actually there; relative ones hang off $HOME.
 np_feat_requires() {
   np_conf_values "$np_conf_feat_table" "$1" requires | while IFS= read -r np_feat_req; do
-    case "$np_feat_req" in
-      (/*) ;;
-      (*) np_feat_req="$HOME/$np_feat_req" ;;
-    esac
+    np_feat_req=$(np_home_path "$np_feat_req")
     [ -f "$np_feat_req" ] && { printf '%s' "$np_feat_req"; break; }
   done
 }
@@ -2383,8 +2420,12 @@ np_feat_installed() {
 }
 np_feat_switched() {
   eval "np_feat_sv=\${$1-}"
+  if [ -n "$(np_feat_first "$1" type)" ]; then
+    # shellcheck disable=SC2154 # eval assigns np_feat_sv above
+    [ -n "$np_feat_sv" ]
+    return
+  fi
   np_feat_son=$(np_feat_first "$1" on)
-  # shellcheck disable=SC2154 # eval assigns np_feat_sv above
   [ "$np_feat_sv" = "${np_feat_son:-1}" ]
 }
 # A row is on only if everything it hangs off is, so a sub-option cannot outlive its parent.
@@ -2427,10 +2468,7 @@ while IFS= read -r np_feat_key; do
 
   np_feat_stage=$(np_feat_first "$np_feat_key" stage)
   if [ -n "$np_feat_stage" ]; then
-    case "$np_feat_stage" in
-      (/*) ;;
-      (*) np_feat_stage="$HOME/$np_feat_stage" ;;
-    esac
+    np_feat_stage=$(np_home_path "$np_feat_stage")
     np_feat_sys32="$WINEPREFIX/drive_c/windows/system32"
     if [ ! -d "$np_feat_stage" ]; then
       np_feat_log "$np_feat_key copies no DLLs as $np_feat_stage doesn't exist"

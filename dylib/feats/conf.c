@@ -1,6 +1,7 @@
 #include "conf.h"
 
 #include <dirent.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -89,8 +90,10 @@ static int conf_id_ok(np_conf_kind kind, const char *id) {
 }
 
 // Deliberately narrower than strtod, which also takes hex, inf and nan: this is the
-// same grammar the awk in compat_run.sh matches.
-static int conf_num(const char *v) {
+// same grammar the awk in compat_run.sh matches. 1e999 is grammatical but would reach
+// the panel as inf, which is not a number JavaScript can parse.
+int np_conf_num(const char *v) {
+    const char *start = v;
     int digits = 0;
     if (*v == '+' || *v == '-') v++;
     while (*v >= '0' && *v <= '9') { v++; digits++; }
@@ -105,10 +108,22 @@ static int conf_num(const char *v) {
         if (!(*v >= '0' && *v <= '9')) return 0;
         while (*v >= '0' && *v <= '9') v++;
     }
-    return !*v;
+    return !*v && isfinite(strtod(start, NULL));
 }
 
 static double conf_dbl(const char *v) { return strtod(v, NULL); }
+
+size_t np_conf_choice(const char *v, const char **label) {
+    const char *eq = strchr(v, '=');
+    size_t vlen = eq ? (size_t)(eq - v) : strlen(v);
+    while (vlen && conf_space(v[vlen - 1])) vlen--;
+    if (label) {
+        const char *l = eq ? eq + 1 : "";
+        while (conf_space(*l)) l++;
+        *label = *l ? l : NULL;
+    }
+    return vlen;
+}
 
 // A choice is "<value> = <label>"; the value is what has to be matched.
 static int conf_choice_has(const np_conf_rec_t *rec, const char *want) {
@@ -116,13 +131,8 @@ static int conf_choice_has(const np_conf_rec_t *rec, const char *want) {
     int it = 0;
     size_t len = strlen(want);
     while (np_conf_next(rec, &it, &n, &v)) {
-        const char *eq;
-        size_t vlen;
         if (strcmp(n, "choice") != 0) continue;
-        eq = strchr(v, '=');
-        vlen = eq ? (size_t)(eq - v) : strlen(v);
-        while (vlen && conf_space(v[vlen - 1])) vlen--;
-        if (vlen == len && strncmp(v, want, len) == 0) return 1;
+        if (np_conf_choice(v, NULL) == len && strncmp(v, want, len) == 0) return 1;
     }
     return 0;
 }
@@ -159,11 +169,22 @@ static const char *conf_schema(const np_conf_rec_t *rec, np_conf_kind kind,
         return NULL;
     }
 
-    while (np_conf_next(rec, &it, &n, &v))
+    while (np_conf_next(rec, &it, &n, &v)) {
         if (strcmp(n, "env") == 0 && !conf_env_ok(v)) {
             *detail = "env";
             return NP_CONF_BAD_VALUE;
         }
+        if (strcmp(n, "choice") == 0 && !np_conf_choice(v, NULL)) {
+            *detail = "choice";
+            return NP_CONF_BAD_VALUE;
+        }
+    }
+    // A parent is looked up by id at launch, so it has to be one.
+    v = np_conf_get(rec, "depends");
+    if (v && !conf_id_ok(NP_CONF_PLUGIN, v)) {
+        *detail = "depends";
+        return NP_CONF_BAD_VALUE;
+    }
     v = np_conf_get(rec, "section");
     if (v && strcmp(v, "dev") != 0) {
         *detail = "section";
@@ -196,25 +217,43 @@ static const char *conf_schema(const np_conf_rec_t *rec, np_conf_kind kind,
         if (dflt && !conf_choice_has(rec, dflt)) return NP_CONF_BAD_DEFAULT;
         return NULL;
     }
-    if (!conf_num(mn)) { *detail = "min"; return NP_CONF_BAD_VALUE; }
-    if (!conf_num(mx) || conf_dbl(mx) <= conf_dbl(mn)) { *detail = "max"; return NP_CONF_BAD_VALUE; }
-    if (step && !conf_num(step)) { *detail = "step"; return NP_CONF_BAD_VALUE; }
-    if (dflt && !conf_num(dflt)) return NP_CONF_BAD_DEFAULT;
+    if (!np_conf_num(mn)) { *detail = "min"; return NP_CONF_BAD_VALUE; }
+    if (!np_conf_num(mx) || conf_dbl(mx) <= conf_dbl(mn)) { *detail = "max"; return NP_CONF_BAD_VALUE; }
+    if (step && (!np_conf_num(step) || conf_dbl(step) <= 0)) { *detail = "step"; return NP_CONF_BAD_VALUE; }
+    if (dflt && (!np_conf_num(dflt) || conf_dbl(dflt) < conf_dbl(mn) || conf_dbl(dflt) > conf_dbl(mx)))
+        return NP_CONF_BAD_DEFAULT;
+    return NULL;
+}
+
+// Ids and the record cap are per directory, counted across its files.
+typedef struct {
+    char ids[NP_CONF_RECORDS_MAX][NP_CONF_ID_MAX];
+    int  count;
+} conf_seen_t;
+
+static const char *conf_admit(conf_seen_t *seen, const char *id) {
+    for (int i = 0; i < seen->count; i++)
+        if (strcmp(seen->ids[i], id) == 0) return NP_CONF_DUP_ID;
+    if (seen->count >= NP_CONF_RECORDS_MAX) return NP_CONF_LIMIT;
+    snprintf(seen->ids[seen->count++], NP_CONF_ID_MAX, "%s", id);
     return NULL;
 }
 
 static void conf_emit(np_conf_rec_t *rec, np_conf_kind kind, const char *code,
-                      const char *detail, const np_conf_sink_t *sink, void *ctx) {
-    if (!*rec->id) return;
-    if (!code) code = conf_schema(rec, kind, &detail);
-    if (!code && sink->record) code = sink->record(rec, ctx, &detail);
-    if (code && sink->refused) sink->refused(rec->id, code, detail, ctx);
+                      const char *detail, const np_conf_sink_t *sink, void *ctx,
+                      conf_seen_t *seen) {
+    if (*rec->id) {
+        if (!code) code = conf_schema(rec, kind, &detail);
+        if (!code && (code = conf_admit(seen, rec->id))) detail = NULL;
+        if (!code && sink->record) code = sink->record(rec, ctx, &detail);
+        if (code && sink->refused) sink->refused(rec->id, code, detail, ctx);
+    }
     rec->id[0] = 0;
     rec->nkv = rec->kvlen = 0;
 }
 
-void np_conf_read_file(const char *path, const char *shown, np_conf_kind kind,
-                       const np_conf_sink_t *sink, void *ctx) {
+static void conf_read_file(const char *path, const char *shown, np_conf_kind kind,
+                           const np_conf_sink_t *sink, void *ctx, conf_seen_t *seen) {
     char line[NP_CONF_LINE + 2];
     char unknown[64];
     np_conf_rec_t rec;
@@ -222,11 +261,17 @@ void np_conf_read_file(const char *path, const char *shown, np_conf_kind kind,
     int seen_header = 0;
     FILE *fp;
 
-    if (sink->file) sink->file(shown, ctx);
     if (!(fp = fopen(path, "r"))) {
         if (sink->refused) sink->refused(shown, NP_CONF_UNREADABLE, NULL, ctx);
         return;
     }
+    // awk never sees a file with no lines, so neither does a sink.
+    {
+        int c = fgetc(fp);
+        if (c == EOF) { fclose(fp); return; }
+        ungetc(c, fp);
+    }
+    if (sink->file) sink->file(shown, ctx);
     memset(&rec, 0, sizeof(rec));
     while (fgets(line, sizeof(line), fp)) {
         char *eq, *v, *k = line;
@@ -250,15 +295,17 @@ void np_conf_read_file(const char *path, const char *shown, np_conf_kind kind,
                 continue;
             }
             *close = 0;
-            conf_emit(&rec, kind, code, detail, sink, ctx);
+            conf_emit(&rec, kind, code, detail, sink, ctx, seen);
             code = NULL;
             detail = NULL;
             k++;
             while (conf_space(*k)) k++;
             conf_trim(k);
             seen_header = 1;
-            if (snprintf(rec.id, sizeof(rec.id), "%s", k) >= (int)sizeof(rec.id) ||
-                !conf_id_ok(kind, rec.id)) {
+            if (!*k) {
+                if (sink->refused) sink->refused(shown, NP_CONF_BAD_ID, NULL, ctx);
+            } else if (snprintf(rec.id, sizeof(rec.id), "%s", k) >= (int)sizeof(rec.id) ||
+                       !conf_id_ok(kind, rec.id)) {
                 code = NP_CONF_BAD_ID;
             }
             continue;
@@ -269,7 +316,7 @@ void np_conf_read_file(const char *path, const char *shown, np_conf_kind kind,
             fclose(fp);
             return;
         }
-        if (code) continue;   // this record is already refused; skip to the next header
+        if (code) continue;   // record already refused, skip to the next header
         *eq = 0;
         v = eq + 1;
         conf_trim(k);
@@ -279,7 +326,7 @@ void np_conf_read_file(const char *path, const char *shown, np_conf_kind kind,
             // k points into line, which the next read overwrites.
             snprintf(unknown, sizeof(unknown), "%s", k);
             code = NP_CONF_UNKNOWN;
-            detail = unknown;
+            detail = *unknown ? unknown : NULL;
             continue;
         }
         if (!*v) { code = NP_CONF_EMPTY; detail = spec->name; continue; }
@@ -300,7 +347,7 @@ void np_conf_read_file(const char *path, const char *shown, np_conf_kind kind,
         rec.kvlen += (int)strlen(v) + 1;
         rec.nkv++;
     }
-    conf_emit(&rec, kind, code, detail, sink, ctx);
+    conf_emit(&rec, kind, code, detail, sink, ctx, seen);
     fclose(fp);
 }
 
@@ -333,13 +380,15 @@ void np_conf_read_dir(const char *dir, const char *shown_dir, np_conf_kind kind,
     }
     closedir(d);
     if (names) qsort(names, (size_t)count, sizeof(*names), conf_cmp);
+    conf_seen_t *seen = calloc(1, sizeof(*seen));
     for (int i = 0; i < count; i++) {
         char path[2048], shown[2048];
         snprintf(path, sizeof(path), "%s/%s", dir, names[i]);
         snprintf(shown, sizeof(shown), "%s%s%s", shown_dir ? shown_dir : "",
                  shown_dir && *shown_dir ? "/" : "", names[i]);
-        np_conf_read_file(path, shown, kind, sink, ctx);
+        if (seen) conf_read_file(path, shown, kind, sink, ctx, seen);
         free(names[i]);
     }
+    free(seen);
     free(names);
 }

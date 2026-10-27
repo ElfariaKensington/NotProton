@@ -7,8 +7,8 @@
 #
 # This is one pass over each directory, not a file at a time: ids and the 32-record
 # cap are per directory, so the sections below run in file-name order and a record
-# can collide with one in an earlier file. The cap itself is checked in featcheck
-# rather than here, since 33 records of fixture would say nothing else.
+# can collide with one in an earlier file, and the cap counts the records of every file
+# before it.
 
 == plugins/10-grouped.conf
 NOTPROTON_HUD	label	Hud
@@ -70,12 +70,23 @@ NOTPROTON_ALSO_KEEPS	label	Also keeps
 NOTPROTON_DUP	label	First
 !	NOTPROTON_DUP	duplicate-id
 
+== plugins/65-header-faults.conf
+!	plugins/65-header-faults.conf	bad-id
+NOTPROTON_AFTER_EMPTY	label	After
+!	NOTPROTON_LLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLL	bad-id
+!	NOTPROTON_LONG_FIELD	unknown-field:fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
+!	NOTPROTON_NO_NAME	unknown-field
+
 == plugins/70-field-faults.conf
 !	NOTPROTON_TWICE	duplicate-field:label
 !	NOTPROTON_EMPTY	empty-value:label
 !	NOTPROTON_NOLABEL	missing-required:label
 !	NOTPROTON_BADENV	bad-value:env
 !	NOTPROTON_TABBED	tab-in-value:description
+
+== plugins/75-value-faults.conf
+!	NOTPROTON_BAD_DEPENDS	bad-value:depends
+!	NOTPROTON_ENV_HUGE	bad-value:max
 
 == plugins/80-slider-faults.conf
 !	NOTPROTON_BOTH	slider-shape
@@ -90,6 +101,9 @@ NOTPROTON_DUP	label	First
 # One line over the limit drops the file: past it the parser cannot say what it read.
 == plugins/90-line-too-long.conf
 !	plugins/90-line-too-long.conf	line-too-long
+
+== plugins/95-after-long-line.conf
+NOTPROTON_AFTER_LONG	label	After
 
 == variants/10-group.conf
 dxmt-mine	label	My DXMT build
@@ -109,3 +123,64 @@ plain	dst	lib/wine
 !	absolute	bad-value:dst
 !	stranger	unknown-field:tools
 !	BAD ID	bad-id
+
+== variants/30-cap.conf
+cap-00	src	code/cap
+cap-00	dst	lib/wine
+cap-01	src	code/cap
+cap-01	dst	lib/wine
+cap-02	src	code/cap
+cap-02	dst	lib/wine
+cap-03	src	code/cap
+cap-03	dst	lib/wine
+cap-04	src	code/cap
+cap-04	dst	lib/wine
+cap-05	src	code/cap
+cap-05	dst	lib/wine
+cap-06	src	code/cap
+cap-06	dst	lib/wine
+cap-07	src	code/cap
+cap-07	dst	lib/wine
+cap-08	src	code/cap
+cap-08	dst	lib/wine
+cap-09	src	code/cap
+cap-09	dst	lib/wine
+cap-10	src	code/cap
+cap-10	dst	lib/wine
+cap-11	src	code/cap
+cap-11	dst	lib/wine
+cap-12	src	code/cap
+cap-12	dst	lib/wine
+cap-13	src	code/cap
+cap-13	dst	lib/wine
+cap-14	src	code/cap
+cap-14	dst	lib/wine
+cap-15	src	code/cap
+cap-15	dst	lib/wine
+cap-16	src	code/cap
+cap-16	dst	lib/wine
+cap-17	src	code/cap
+cap-17	dst	lib/wine
+cap-18	src	code/cap
+cap-18	dst	lib/wine
+cap-19	src	code/cap
+cap-19	dst	lib/wine
+cap-20	src	code/cap
+cap-20	dst	lib/wine
+cap-21	src	code/cap
+cap-21	dst	lib/wine
+cap-22	src	code/cap
+cap-22	dst	lib/wine
+cap-23	src	code/cap
+cap-23	dst	lib/wine
+cap-24	src	code/cap
+cap-24	dst	lib/wine
+cap-25	src	code/cap
+cap-25	dst	lib/wine
+cap-26	src	code/cap
+cap-26	dst	lib/wine
+cap-27	src	code/cap
+cap-27	dst	lib/wine
+cap-28	src	code/cap
+cap-28	dst	lib/wine
+!	cap-29	limit

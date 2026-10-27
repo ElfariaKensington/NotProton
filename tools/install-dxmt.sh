@@ -75,7 +75,7 @@ verify_src() {
     # Every directory in the tree has to exist in a runner, which is the arch check.
     for base in "$runners"/crossover-*/; do
         base=${base%/}
-        case "$(basename "$base")" in *-*-*) continue ;; esac
+        case "${base##*/}" in *+*) continue ;; esac
         [ -d "$base/CrossOver/$dst" ] || continue
         lands=0
         for rel in $files; do
@@ -98,18 +98,42 @@ list_variants() {
     found=0
     for conf in "$conf_dir"/*.conf; do
         [ -r "$conf" ] || continue
-        found=1
-        name=$(basename "$conf" .conf)
-        src=$(sed -n 's/^[[:space:]]*src[[:space:]]*=[[:space:]]*\(.*\)$/\1/p' "$conf" | head -1)
-        case "$src" in /*) ;; *) src="$HOME/$src" ;; esac
-        if verify_src "$src" >/dev/null 2>&1; then state="ok"; else state="needs attention"; fi
-        printf '  %-28s %s\n' "$name" "$state"
-        printf '  %-28s %s\n' "" "$src"
+        written_here "$conf" || continue
+        records=$(awk '
+            function trim(s) { gsub(/^[ \t\r\n]+|[ \t\r\n]+$/, "", s); return s }
+            /^[ \t]*\[.*\]/ {
+                if (id != "" && src != "") printf "%s\t%s\n", id, src
+                line = $0; sub(/^[ \t]*\[/, "", line); sub(/\][ \t\r]*$/, "", line)
+                id = trim(line); src = ""; next
+            }
+            id != "" && /^[ \t]*src[ \t]*=/ {
+                line = $0; sub(/^[ \t]*src[ \t]*=[ \t]*/, "", line)
+                if (src == "") src = trim(line)
+            }
+            END { if (id != "" && src != "") printf "%s\t%s\n", id, src }
+        ' "$conf")
+        [ -n "$records" ] || continue
+        while IFS="$(printf '\t')" read -r name src; do
+            [ -n "$name" ] || continue
+            found=1
+            # shellcheck disable=SC2088,SC2016
+            case "$src" in
+                (/*) ;;
+                ("~/"*) src="$HOME/${src#"~/"}" ;;
+                ('$HOME/'*) src="$HOME/${src#'$HOME/'}" ;;
+                (*) src="$HOME/$src" ;;
+            esac
+            if verify_src "$src" >/dev/null 2>&1; then state="ok"; else state="needs attention"; fi
+            printf '  %-28s %s\n' "$name" "$state"
+            printf '  %-28s %s\n' "" "$src"
+        done <<RECORDS
+$records
+RECORDS
     done
-    [ "$found" -eq 1 ] || echo "  (no descriptors in $conf_dir)"
+    [ "$found" -eq 1 ] || echo "  (no descriptors this script wrote in $conf_dir)"
 
     found=0
-    for d in "$runners"/crossover-*-*-*/; do
+    for d in "$runners"/crossover-*+*/; do
         [ -d "$d" ] || continue
         [ "$found" -eq 1 ] || echo "  runners built from them:"
         found=1
@@ -117,29 +141,41 @@ list_variants() {
     done
 }
 
-# A runner is named crossover-<build>-<name>..., so a variant owns any directory carrying
-# its name as one of the trailing components.
+# A runner is named crossover-<build>+<name>+..., so a variant owns any directory carrying
+# its name as one of the components after the build.
 built_runners() {
-    for d in "$runners"/crossover-*-*/; do
+    for d in "$runners"/crossover-*+*/; do
         [ -d "$d" ] || continue
-        case "-$(basename "${d%/}")-" in
-            *"-$1-"*) printf '%s\n' "${d%/}" ;;
+        case "$(basename "${d%/}")+" in
+            *"+$1+"*) printf '%s\n' "${d%/}" ;;
         esac
     done
+}
+
+# Only descriptors this script wrote are its to list or remove: a file of the user's own
+# may hold other records beside the one asked for.
+written_here() {
+    head -n 1 "$1" 2>/dev/null | grep -q '^# Written by install-dxmt\.sh'
 }
 
 remove_variant() {
     name=$1
     case "$name" in
-        *[!A-Za-z0-9.-]*|"") die "$name is not a variant name" ;;
+        [!A-Za-z0-9]*|*[!A-Za-z0-9._-]*|"") die "$name is not a variant name" ;;
     esac
     conf="$conf_dir/$name.conf"
     gone=0
-    if [ -f "$conf" ]; then rm -f "$conf"; say "removed $conf"; gone=1; fi
+    if [ -f "$conf" ] && written_here "$conf"; then rm -f "$conf"; say "removed $conf"; gone=1
+    elif [ -f "$conf" ]; then say "$conf was not written by this script, so it is left for you"; fi
     list=$(mktemp) || die "cannot make a temp file"
     built_runners "$name" > "$list"
     while IFS= read -r d; do
         [ -n "$d" ] || continue
+        # shellcheck disable=SC2009 # pgrep matches arguments; the executable path is the signal
+        if ps -axww -o comm= 2>/dev/null | grep -qF "$d/"; then
+            say "a game is running from $(basename "$d"), so it is left; remove again once it quits"
+            continue
+        fi
         rm -rf "$d"
         say "removed the runner $(basename "$d")"
         gone=1
@@ -182,7 +218,11 @@ write_descriptor() {
             (*) name="dxmt-$name" ;;
         esac
     fi
-    name=$(printf '%s' "$name" | tr -c 'A-Za-z0-9.-' '-')
+    name=$(printf '%s' "$name" | tr -c 'A-Za-z0-9._-' '-')
+    case "$name" in
+        [A-Za-z0-9]*) ;;
+        *) die "$name is not a variant name: it has to start with a letter or a digit" ;;
+    esac
 
     verify_src "$src" || die "$src is not usable yet; nothing was written"
 

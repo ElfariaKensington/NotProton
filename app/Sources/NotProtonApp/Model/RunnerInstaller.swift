@@ -76,14 +76,16 @@ enum RunnerInstaller {
         guard FileManager.default.fileExists(atPath: path) else {
             throw StepFailure(step: removeStep, detail: String(localized: "Build \(build) is not set up."))
         }
-        guard !running(target) else {
+        let fm = FileManager.default
+        // Variant runners are clones of this build, so they go with it.
+        let variants = RunnerStore.variantEntries(ofBuild: build, in: runners)
+        guard !running(target), !variants.contains(where: running) else {
             throw StepFailure(
                 step: removeStep,
                 detail: String(localized: "A game or Wine tool is still running on build \(build). Quit it first.")
             )
         }
 
-        let fm = FileManager.default
         let trash = target.deletingLastPathComponent().appending(path: ".\(target.lastPathComponent).removing")
         removeLeftoverRemovals(runners: runners)
         try WriteRefused.catching(path) { try fm.moveItem(at: target, to: trash) }
@@ -97,6 +99,9 @@ enum RunnerInstaller {
             throw error
         }
         try WriteRefused.catching(trash) { try fm.removeItem(at: trash) }
+        for variant in variants {
+            try? fm.removeItem(at: variant)
+        }
         let failures = removeStalePrefixTemplates(runners: runners, libraries: libraries)
         if !failures.isEmpty {
             throw StepFailure(step: removeStep, detail: failures.map(\.detail).joined(separator: "\n"))

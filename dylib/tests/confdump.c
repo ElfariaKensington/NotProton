@@ -1,26 +1,19 @@
 // Prints what the reader makes of a fixture tree, in the normalised form from
 // conf-format.md, so dylib/tests/conf-fixtures/EXPECTED can judge it the same way it
 // judges compat_run.sh.
-#include "../feats/conf.c"
+#include "../feats/conf.h"
 
-typedef struct {
-    char ids[32][NP_CONF_ID_MAX];
-    int  nids;
-} seen_t;
+#include <stdio.h>
 
 static void print_tsv(const char *a, const char *b, const char *c, const char *detail) {
     printf("%s\t%s\t%s%s%s\n", a, b, c, detail ? ":" : "", detail ? detail : "");
 }
 
 static const char *on_record(const np_conf_rec_t *rec, void *ctx, const char **detail) {
-    seen_t *seen = ctx;
     const char *n, *v;
     int it = 0;
+    (void)ctx;
     (void)detail;
-    for (int i = 0; i < seen->nids; i++)
-        if (strcmp(seen->ids[i], rec->id) == 0) return NP_CONF_DUP_ID;
-    if (seen->nids >= 32) return NP_CONF_LIMIT;
-    snprintf(seen->ids[seen->nids++], NP_CONF_ID_MAX, "%s", rec->id);
     while (np_conf_next(rec, &it, &n, &v))
         print_tsv(rec->id, n, v, NULL);
     return NULL;
@@ -41,10 +34,9 @@ int main(int argc, char **argv) {
     char dir[2048];
     if (argc != 2) { fprintf(stderr, "usage: confdump <fixture-root>\n"); return 2; }
     for (int i = 0; i < 2; i++) {
-        seen_t seen = { { { 0 } }, 0 };   // ids and the record cap are per directory
         const char *name = i ? "variants" : "plugins";
         snprintf(dir, sizeof(dir), "%s/%s", argv[1], name);
-        np_conf_read_dir(dir, name, i ? NP_CONF_VARIANT : NP_CONF_PLUGIN, &sink, &seen);
+        np_conf_read_dir(dir, name, i ? NP_CONF_VARIANT : NP_CONF_PLUGIN, &sink, NULL);
     }
     return 0;
 }
