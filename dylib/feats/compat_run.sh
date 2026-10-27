@@ -1623,6 +1623,8 @@ if [ -d "$bridge_src" ] && [ -n "$WINEPREFIX" ]; then
       *) rm -f "$f" && echo "=== pruned stale $(basename "$f") ===" >> "$log" 2>&1 ;;
     esac
   done
+  # Needed for CEG 'platform survey'.
+  mkdir -p "$WINEPREFIX/drive_c/windows/system32/config" 2>/dev/null || true
   verify_runner
   if ! install_lsteamclient_trigger; then
     show_alert "Steam files could not be copied" "NotProton could not copy a file into this game's prefix. Open this prefix's notproton-run.log for details."
