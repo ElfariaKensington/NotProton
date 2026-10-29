@@ -1,6 +1,7 @@
 // Enables Steam Play in the UI/enables the Compatibility tab in game properties
 #include "webpatch.h"
 #include "compatsvc.h"
+#include "webpatch_gameenv.h"
 #include "../util/buildid.h"
 #include "nativeplatform.h"
 #include "../util/log.h"
@@ -932,7 +933,7 @@ static int out_expand(np_out_t *o, const char *replace, const np_cap_t *caps) {
 #define NP_CX_OPTIONS_COMPONENT \
     "MSCXLaunch=" NP_CX_LAUNCH ",MSCXPick=" NP_CX_PICK "," \
     "MSCXPanel=" NP_CX_CAPTURE(NP_CX_PANEL, NP_C4, NP_C5) "," \
-    "MSCXOpts=" NP_CX_CAPTURE(NP_CX_OPTIONS_BODY, NP_C4, NP_C5) ","
+    "MSCXOpts=" NP_CX_GAME_ENV(NP_C4, NP_C5) ","
 
 // Valve is testing a new compatibility page UI, this logic relates to supporting that
 #define NP_CX_OPTIONS_STATEMENT \
@@ -940,7 +941,7 @@ static int out_expand(np_out_t *o, const char *replace, const np_cap_t *caps) {
     "var MSCXPick=" NP_CX_PICK ";" \
     "var MSCXToolQuery=" NP_CX_TOOL_QUERY ";" \
     "var MSCXPanel=" NP_CX_CAPTURE(NP_CX_PANEL, NP_C3, NP_C4) ";" \
-    "var MSCXOpts=" NP_CX_CAPTURE(NP_CX_OPTIONS_BODY, NP_C3, NP_C4) ";" \
+    "var MSCXOpts=" NP_CX_GAME_ENV(NP_C3, NP_C4) ";" \
     "var MSCXDefaultsPage=" NP_CX_CAPTURE(NP_CX_DEFAULTS_PAGE_BODY, NP_C3, NP_C4) ";"
 
 // 1.0.x saved CrossOver settings without %command%, this migrates them.

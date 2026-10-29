@@ -172,6 +172,35 @@ if [ "$np_flavor" = rosetta ] || [ ! -x "$WINELOADER" ] || [ ! -x "$WINESERVER" 
 fi
 export WINELOADER WINESERVER
 
+# Read the prefix-local editor file as data, never as shell code. Keep a snapshot
+# for both the launcher settings and LaunchServices forwarding (last duplicate wins).
+np_game_env_text=""
+if [ "$verb" = waitforexitandrun ] && [ -n "$STEAM_COMPAT_DATA_PATH" ] \
+  && [ -r "$STEAM_COMPAT_DATA_PATH/notproton.env" ]; then
+  np_game_env_text=$(LC_ALL=C awk '
+    { sub(/\r$/, ""); eq = index($0, "="); if (!eq) next
+      key = substr($0, 1, eq - 1); gsub(/^[ \t]+|[ \t]+$/, "", key)
+      if (key !~ /^[A-Za-z_][A-Za-z0-9_]*$/) next
+      if (!(key in values)) keys[++count] = key
+      values[key] = substr($0, eq + 1)
+    }
+    END { for (i = 1; i <= count; i++) print keys[i] "=" values[keys[i]] }
+  ' "$STEAM_COMPAT_DATA_PATH/notproton.env")
+fi
+# Only settings consumed by this script enter its environment. Arbitrary names
+# are forwarded below without being able to overwrite shell variables like log.
+while IFS= read -r np_game_env_line; do
+  np_game_env_key=${np_game_env_line%%=*}
+  case "$np_game_env_key" in
+    CX_GRAPHICS_BACKEND | D3DM_* | DXMT_* | DXVK_* | FEX_* | MTL_* | ROSETTA_* | \
+    WINEDEBUG | WINEMSYNC | WINEDLLOVERRIDES | NOTPROTON_RETINA | \
+    NOTPROTON_RAW_CONTROLLERS | NOTPROTON_DISABLE_HIDRAW)
+      export "${np_game_env_line?}" ;;
+  esac
+done <<NP_GAME_ENV_SETTINGS
+$np_game_env_text
+NP_GAME_ENV_SETTINGS
+
 np_from_defaults() {
   case " $np_defaulted " in *" $1="*) return 0 ;; esac
   return 1
@@ -2191,6 +2220,21 @@ else
   echo "=== client staged no overlay renderer, overlay disabled ===" >> "$log" 2>&1 || true
 fi
 set -- --args "$shim_exe" "$@"
+# Forward custom names without touching Steam launch options or the game argv.
+# Launcher-owned paths stay authoritative. Known settings were applied before
+# defaults above and are forwarded by the normal, runner-aware environment below.
+while IFS= read -r np_game_env_line; do
+  np_game_env_key=${np_game_env_line%%=*}
+  case "$np_game_env_key" in
+    '' | DYLD_* | PATH | HOME | CX_ROOT | CX_HOME | CX_APPLEGPTK_LIBD3DSHARED_PATH | \
+    STEAM_COMPAT_* | STEAM_DYLD_INSERT_LIBRARIES | WINEPREFIX | WINELOADER | WINESERVER | WINEDLLPATH | \
+    CX_GRAPHICS_BACKEND | D3DM_* | DXMT_* | DXVK_* | FEX_* | MTL_* | ROSETTA_* | \
+    WINEDEBUG | WINEMSYNC | WINEDLLOVERRIDES | NOTPROTON_*) continue ;;
+  esac
+  set -- --env "$np_game_env_line" "$@"
+done <<NP_GAME_ENV_FORWARD
+$np_game_env_text
+NP_GAME_ENV_FORWARD
 # Prepended first so they end up last among the --env args since open keeps the last of a repeated name.
 while IFS= read -r np_feat_env; do
   [ -n "$np_feat_env" ] && set -- --env "$np_feat_env" "$@"
@@ -2204,8 +2248,7 @@ for name in $(env | LC_ALL=C sed -nE 's/^(CX_APPLEGPTK_LIBD3DSHARED_PATH|Steam[A
 done
 
 # Anything this script does not know by name. A launch option NOTPROTON_ENV_FOO=bar gives
-# the game FOO=bar, which is the only per-game way to set one, and Wine and the graphics
-# layers take far more than the prefixes above.
+# the game FOO=bar. Wine and the graphics layers take far more than the prefixes above.
 np_env_passed=$(env | LC_ALL=C sed -nE 's/^NOTPROTON_ENV_([A-Za-z_][A-Za-z0-9_]*)=.*/\1/p' \
   | LC_ALL=C sort)
 for name in $np_env_passed; do

@@ -73,7 +73,7 @@ DEPS := $(OBJS:.o=.d)
 
 .PHONY: all clean rebuild dobby deploy dylib dylib-install sigcheck fonts fonts-install app-payload app app-zip \
         anchorcheck callscheck sigdb-fixtures webpatch-fixtures peicon-fixtures ceg-check panel-behavior app-tests \
-        featcheck featstagecheck \
+        featcheck featstagecheck gameenv-check \
         tests-list overlay-shim overlay-shim-install overlay-shim-tests \
         overlay-shim-bench iconmaker icon \
         appinfo helpers-install ntdll-resolve bridge runcheck compatcheck envpasscheck \
@@ -128,6 +128,9 @@ routecheck:
 bridgecheck:
 	@if [ ! -f dylib/tests/bridgecheck.sh ]; then $(call SKIP,bridgecheck,dylib/tests/bridgecheck.sh); exit 0; fi; \
 	sh dylib/tests/bridgecheck.sh dylib/feats/compat_run.sh
+
+gameenv-check:
+	python3 dylib/tests/gameenv-check.py
 
 envpasscheck:
 	@if [ ! -f dylib/tests/envpasscheck.sh ]; then \
@@ -446,6 +449,7 @@ panel-behavior:
 	$(TEST_CC) -O1 -o $(OUT_DIR)/panel-emit \
 	  $(PANEL_TESTS)/emit.c && \
 	node $(PANEL_TESTS)/behavior.js $(OUT_DIR)/panel-emit && \
+	node $(PANEL_TESTS)/environment.js $(OUT_DIR)/panel-emit && \
 	node $(PANEL_TESTS)/switching.js $(OUT_DIR)/panel-emit && \
 	node $(PANEL_TESTS)/launch-options.js $(OUT_DIR)/panel-emit && \
 	node $(PANEL_TESTS)/shell.js $(OUT_DIR)/panel-emit && \

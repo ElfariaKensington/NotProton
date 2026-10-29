@@ -16,6 +16,7 @@
 #include "compat.h"
 #include "defaults.h"
 #include "prefixstate.h"
+#include "gameenv.h"
 #include "webui.h"
 #include "../resolver/anchor.h"
 #include "../util/file.h"
@@ -366,6 +367,43 @@ static int prefix_state(uintptr_t request, uintptr_t response) {
     return answer_json(response, appid, json);
 }
 
+// Resolve through the same library/shortcut lookup as the prefix controls.
+static int game_env_directory(uint32_t appid, char *dir, size_t cap) {
+    np_prefix_state_t st;
+    if (!read_state(appid, &st)) return 0;
+    int n = st.compatdata[0] ? snprintf(dir, cap, "%s", st.compatdata)
+        : snprintf(dir, cap, "%s/Library/Application Support/Steam/steamapps/compatdata/%u",
+                   np_home_dir(), appid);
+    return n > 0 && (size_t)n < cap;
+}
+
+static int get_game_env(uintptr_t request, uintptr_t response) {
+    char dir[PATH_MAX];
+    if (!game_env_directory(request_appid(request), dir, sizeof dir)) return RESULT_FAIL;
+    char *text = game_env_read(dir);
+    if (!text) return RESULT_FAIL;
+    size_t cap = strlen(text) + 8;
+    uint8_t *body = malloc(cap);
+    if (!body) { free(text); return RESULT_FAIL; }
+    np_pb_t w = { body, cap, 0, 1 };
+    pb_string(&w, RESP_DEFAULT, text);
+    int ok = w.ok && np_webui_parse_into(response, body, (uint32_t)w.len);
+    free(body);
+    free(text);
+    return ok ? RESULT_OK : RESULT_FAIL;
+}
+
+static int set_game_env(uintptr_t request, uintptr_t response) {
+    (void)response;
+    uint32_t bits = *(const uint32_t *)(request + REQ_HAS_BITS_OFF);
+    uint32_t appid = (bits & SPECIFY_HAS_APPID)
+        ? *(const uint32_t *)(request + SPECIFY_APPID_OFF) : 0;
+    char dir[PATH_MAX];
+    return game_env_directory(appid, dir, sizeof dir)
+        && game_env_save(dir, string_field(request + SPECIFY_TOOL_NAME_OFF))
+        ? RESULT_OK : RESULT_FAIL;
+}
+
 // Runs argv with nothing of Steam's environment, so neither the insert nor Steam's own
 // variables reach the child. Waits for it, which is short for everything started here.
 static int run_detached(char *const argv[]) {
@@ -566,6 +604,11 @@ void np_compatsvc_register(const struct mach_header_64 *mh, intptr_t slide,
         || !np_webui_register_route(ROUTE_APPLY_TOOL_DEFAULTS, specify_request, specify_response,
                                     apply_tool_defaults))
         NP_WARN("compatsvc: the Settings page cannot save default compatibility settings");
+
+    if (!np_webui_register_route("NotProton.GetGameEnvironment#1", request, response, get_game_env)
+        || !np_webui_register_route("NotProton.SetGameEnvironment#1", specify_request,
+                                    specify_response, set_game_env))
+        NP_WARN("compatsvc: the Compatibility page cannot edit game environment variables");
 
     g_routes = NP_COMPATSVC_READY;
 

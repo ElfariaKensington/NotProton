@@ -94,7 +94,7 @@ const char *np_compat_tool_commandline(void) { return "/fake/run %verb%"; }
 
 // Stubs for the webui layer. np_webui_parse_into captures the protobuf bytes so the
 // test can decode them.
-static uint8_t captured_pb[8192];
+static uint8_t captured_pb[65544];
 static uint32_t captured_pb_len;
 static int parse_into_ok = 1;
 
@@ -983,6 +983,56 @@ static void rebuild_route_cases(void) {
     if (system(cmd) != 0) fprintf(stderr, "could not remove %s\n", scratch);
 }
 
+static void game_env_cases(void) {
+    char root[] = "/tmp/notproton-gameenv.XXXXXX";
+    check(mkdtemp(root) != NULL, "environment fixture directory created");
+    snprintf(stub_state.compatdata, sizeof stub_state.compatdata, "%s/library/steamapps/compatdata/480", root);
+    const char *text = "# literal values\r\n FOO =two words=ok\nEMPTY=\nUNICODE=日本語\nCMD=$(touch nope)\n";
+    uintptr_t response = (uintptr_t)response_buf;
+    check(get_game_env(build_request(REQ_HAS_APPID, 480), response) == RESULT_OK,
+          "environment before first launch reads empty");
+    check(set_game_env(build_specify_request(SPECIFY_HAS_APPID, 480, text), response) == RESULT_OK,
+          "environment saves in the resolved library before first launch");
+    char path[PATH_MAX];
+    game_env_filename(stub_state.compatdata, path, sizeof path);
+    struct stat st;
+    check(stat(path, &st) == 0 && (st.st_mode & 0777) == 0600,
+          "prefix environment file is private");
+    char *stored = game_env_read(stub_state.compatdata);
+    check(stored && strcmp(stored, text) == 0, "comments, Unicode and literal values round trip");
+    free(stored);
+    check(get_game_env(build_request(REQ_HAS_APPID, 480), response) == RESULT_OK,
+          "environment route reads saved text");
+    char readback[1024];
+    pb_copy_string(captured_pb, captured_pb_len, RESP_DEFAULT, readback, sizeof readback);
+    check(strcmp(readback, text) == 0, "environment response contains the exact prefix file");
+    check(set_game_env(build_specify_request(SPECIFY_HAS_APPID, 480, "BAD-NAME=1"), response) == RESULT_FAIL,
+          "invalid environment edit is rejected");
+    stored = game_env_read(stub_state.compatdata);
+    check(stored && strcmp(stored, text) == 0, "invalid edit preserves the saved file");
+    free(stored);
+    check(set_game_env(build_specify_request(SPECIFY_HAS_APPID, 0, "A=1"), response) == RESULT_FAIL,
+          "global environment edits are refused");
+    char *large = malloc(NP_GAME_ENV_MAX + 2);
+    memset(large, 'a', NP_GAME_ENV_MAX + 1); large[0] = 'A'; large[1] = '=';
+    large[NP_GAME_ENV_MAX] = '\0';
+    check(game_env_save(stub_state.compatdata, large), "64 KiB environment can be saved");
+    check(get_game_env(build_request(REQ_HAS_APPID, 480), response) == RESULT_OK,
+          "64 KiB environment fits the response");
+    large[NP_GAME_ENV_MAX] = 'a'; large[NP_GAME_ENV_MAX + 1] = '\0';
+    check(!game_env_save(stub_state.compatdata, large), "oversize environment is rejected");
+    free(large);
+    check(set_game_env(build_specify_request(SPECIFY_HAS_APPID, 480, ""), response) == RESULT_OK,
+          "clearing the editor removes the environment file");
+    check(access(path, F_OK) != 0, "cleared environment file is absent");
+    check(mkdir(path, 0700) == 0 && !game_env_save(stub_state.compatdata, "A=1"),
+          "failed atomic replacement is reported");
+    rmdir(path);
+    char cmd[PATH_MAX + 16];
+    snprintf(cmd, sizeof cmd, "rm -rf '%s'", root);
+    check(system(cmd) == 0, "environment fixture cleaned up");
+}
+
 static void string_field_cases(void) {
     // string_field reads an arena-tagged pointer. Low bit set = arena, cleared before
     // deref. A long string (byte[23] < 0) dereferences the first qword as a pointer to
@@ -1038,6 +1088,7 @@ int main(void) {
     routes_state_cases();
     string_field_cases();
     rebuild_route_cases();
+    game_env_cases();
 
     if (failures) {
         printf("==> compatsvc: %d check(s) failed\n", failures);
