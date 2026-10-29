@@ -21,7 +21,7 @@ for (const form of Object.keys(FORMS)) {
        'a shortcut renders the panel before a tool name reaches the page');
 
   let r = nodes('');
-  t.ok(toggles(r).length === 7 && sections(r).length === 3, 'automatic shows seven toggles in three sections');
+  t.ok(toggles(r).length === 7 && sections(r).length === 4, 'automatic shows seven toggles and the environment section');
   t.ok(r.filter(x => x.type === 'Dropdown').length === 2, 'two dropdowns');
   t.ok(!('label' in r.find(x => x.type === 'Dropdown').props), 'the backend dropdown carries no label column');
 
@@ -94,8 +94,8 @@ for (const form of Object.keys(FORMS)) {
   raw('NOTPROTON_RAW_CONTROLLERS=1 WINEMSYNC=1').props.onChange(false);
   t.ok(last().trim() === 'WINEMSYNC=1 %command%', `turning the controller row off removes its flag (${last()})`);
   const css = nodes('').filter(x => x.type === 'style');
-  t.ok(css.length === 1 && css[0].props.children.includes('.MSCXPanel .MSCXRow{'),
-       'the panel carries one stylesheet defining the row rule');
+  t.ok(css.length === 2 && css[0].props.children.includes('.MSCXPanel .MSCXRow{'),
+       'the panel keeps the row stylesheet alongside the environment stylesheet');
   t.ok(css[0].props.children.includes('.MSCXPanel .MSCXRowDesc>:last-child{flex-basis:100%}'),
        'and the rule that drops a description onto its own line');
 
@@ -181,11 +181,11 @@ for (const form of Object.keys(FORMS)) {
          .every(x => x.props.disabled !== true),
        'readiness never disables a built-in row');
 
-  const rowless = nodes('').filter(x => x.type === 'div' && typeof x.props.ref === 'function');
+  const rowless = nodes('').filter(x => x.type === 'div' && x.props.className === 'MSCXRow' && typeof x.props.ref === 'function');
   t.ok(rowless.length === 0, 'no prefix row before the page defines one');
   const rowsFor = [];
   global.MSCXPrefixRow = (e, id) => rowsFor.push(id);
-  const prefix = nodes('').filter(x => x.type === 'div' && typeof x.props.ref === 'function');
+  const prefix = nodes('').filter(x => x.type === 'div' && x.props.className === 'MSCXRow' && typeof x.props.ref === 'function');
   if (prefix.length === 1) prefix[0].props.ref({});
   delete global.MSCXPrefixRow;
   t.ok(prefix.length === 1 && rowsFor[0] === 287700, 'the panel hosts the prefix row for its game');
