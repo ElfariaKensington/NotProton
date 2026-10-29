@@ -94,7 +94,7 @@ can all live in one file.
 | `variant` | the group it belongs to, which is the dropdown's label. The id when left out, so a variant on its own needs neither. |
 | `src` | the folder laid over the runner, absolute or relative to `$HOME`. |
 | `dst` | where in the runner it goes, relative to the CrossOver folder. |
-| `build` | repeatable, up to 8. A CrossOver build the variant was made for, as its runner folder names it, such as `27.0.0.41073` or `27.0.0.41073-fex`. Required for anything that lands outside DXMT, DXVK and D3DMetal. |
+| `build` | repeatable, up to 8. A CrossOver build the variant was made for, as its runner folder names it, such as `27.0.0.41073` or `27.0.0.41073-fex`. Required when it overwrites a file Wine ships. |
 | `remove` | repeatable, up to 32. A file to delete from the variant's runner, relative to `dst`. |
 
 `src` and `dst` are required; `label` and `variant` fall back to the id, so the smallest
@@ -102,10 +102,10 @@ variant is a header and those two lines. Any field that is not one of these is
 refused rather than ignored, since a typo that looked like it worked would leave you
 testing the stock runner.
 
-A variant landing only in `lib/dxmt`, `lib/dxvk` or `lib/apple_gptk*` works on any build
-that has those folders. One that changes Wine itself, in `lib/wine`, `bin` or anywhere else,
-has to name the builds it was compiled against with `build`, and is left out everywhere
-else. Nothing may replace or remove `ntdll` or `lsteamclient`, which carry the Steam
+A variant that overwrites a file Wine ships, under `bin`, `share/wine`, `lib/wine` or
+`lib64/wine`, has to name the builds it was compiled against with `build`, and is left out
+on any runner where it would overwrite one without. Adding new files, or replacing DXMT,
+DXVK or D3DMetal files, works on any build. Nothing may replace or remove `ntdll` or `lsteamclient`, which carry the Steam
 bridge. Mach-O files are re-signed as they are laid down, keeping the entitlements of the
 file they replace.
 

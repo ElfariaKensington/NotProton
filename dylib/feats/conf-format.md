@@ -128,12 +128,13 @@ alone or followed by `-`) only counts for the runner that runs it. A variant fit
 something lands and, if any folder names an architecture, one for the runner's own lands
 too. A `remove` lands when the runner has what it names. Dot files are ignored throughout.
 
-Where something lands decides how much it is trusted. `lib/dxmt`, `lib/dxvk`,
-`lib/apple_gptk`, `lib/apple_gptk<N>` and the same under `lib64` are layers CrossOver keeps
-beside Wine, and a variant that only lands in those needs no `build`. Anything else,
-`lib/wine`, `bin`, `share` or a `dst` of `.` with a `lib` folder, is Wine itself, compiled
-against one build's headers and wineserver protocol, so a variant landing there without a
-`build` is offered nowhere and refused at launch.
+A variant that overwrites a file Wine ships, one already in the runner under `bin`,
+`share/wine`, `lib/wine` or `lib64/wine` (in any case), has to name a `build`: Wine's own
+files are compiled against one build's headers and wineserver protocol. This is judged per
+runner, file by file, so the same variant can need a `build` on one runner and not on
+another. Adding files that are not there, and replacing anything outside those folders, such
+as DXMT, DXVK or D3DMetal, needs none. Without a `build`, the panel leaves the variant out
+for that runner and the launch refuses it.
 
 The Steam bridge is never a variant's: a variant that would lay down or remove
 `lib/wine/<arch>-windows/ntdll.dll`, `lsteamclient.dll`, `<arch>-unix/ntdll.so` or

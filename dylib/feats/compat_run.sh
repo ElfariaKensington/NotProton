@@ -401,23 +401,6 @@ np_variant_norm() {
   }'
 }
 
-# Layers CrossOver ships beside Wine. Anything else is Wine itself and only fits the build it was compiled against.
-np_variant_standalone() {
-  case "$1" in
-    (lib/dxmt | lib/dxmt/* | lib/dxvk | lib/dxvk/*) return 0 ;;
-    (lib/apple_gptk | lib/apple_gptk/* | lib/apple_gptk[0-9] | lib/apple_gptk[0-9]/*) return 0 ;;
-    (lib64/apple_gptk | lib64/apple_gptk/* | lib64/apple_gptk[0-9] | lib64/apple_gptk[0-9]/*) return 0 ;;
-  esac
-  return 1
-}
-
-# np_v_core_at keeps the first landing that is Wine itself rather than a standalone layer.
-np_variant_landing() {
-  [ -z "$np_v_core_at" ] || return 0
-  np_v_l=$(np_variant_norm "$1")
-  np_variant_standalone "$np_v_l" || np_v_core_at=${np_v_l:-.}
-}
-
 # Whether a tree has anything this runner can use, read from the top of the tree the way
 # var_fits in webpatch.c reads it: files there land in dst, and each folder lands where dst
 # has one of the same name. A folder named for an architecture only counts for the runner
@@ -427,17 +410,13 @@ np_variant_fits() {
   np_v_lands=0
   np_v_named=0
   np_v_fits=0
-  np_v_core_at=""
   np_v_want_arch=$(np_variant_arch)
   np_v_into="$np_support/runners/crossover-$np_build/CrossOver/$2"
   for np_v_e in "$1"/*; do
     # The overlay copies regular files only, so a link never lands.
     [ ! -L "$np_v_e" ] || continue
     if [ -f "$np_v_e" ]; then
-      if [ -d "$np_v_into" ]; then
-        np_v_lands=1
-        np_variant_landing "$2"
-      fi
+      [ ! -d "$np_v_into" ] || np_v_lands=1
       continue
     fi
     [ -d "$np_v_e" ] || continue
@@ -446,7 +425,6 @@ np_variant_fits() {
     if [ -d "$np_v_into/${np_v_e##*/}" ]; then
       np_v_here=1
       np_v_lands=1
-      np_variant_landing "$2/${np_v_e##*/}"
     fi
     np_v_d_arch=$(np_variant_dir_arch "${np_v_e##*/}")
     [ -n "$np_v_d_arch" ] || continue
@@ -460,12 +438,27 @@ np_variant_fits() {
     [ -n "$np_v_r" ] || continue
     if [ -e "$np_v_into/$np_v_r" ] || [ -L "$np_v_into/$np_v_r" ]; then
       np_v_lands=1
-      np_variant_landing "$2/$np_v_r"
     fi
   done <<NP_V_REMOVES
 $np_v_removes
 NP_V_REMOVES
   [ "$np_v_lands" = 1 ] && { [ "$np_v_named" = 0 ] || [ "$np_v_fits" = 1 ]; }
+}
+
+# Overwriting a file Wine ships ties a variant to its build. New files and DXMT or D3DMetal folders don't.
+np_variant_wine_hit() {
+  np_v_wbase="$np_support/runners/crossover-$np_build/CrossOver"
+  ( cd "$1" && find . -name '.?*' -prune -o -type f -print ) |
+    awk -v d="$(np_variant_norm "$2")" '{
+      sub(/^\.\//, ""); p = (d == "" ? $0 : d "/" $0)
+      if (tolower(p) ~ /^(bin|share\/wine|lib\/wine|lib64\/wine)\//) print p
+    }' |
+    while IFS= read -r np_v_w; do
+      if [ -f "$np_v_wbase/$np_v_w" ]; then
+        printf '%s' "$np_v_w"
+        break
+      fi
+    done
 }
 
 # The architecture a directory in a tree is for, empty when it names none. A runner can
@@ -557,8 +550,9 @@ np_variant_read() {
     np_variant_say "$1 would change $np_v_hit, which carries NotProton's Steam bridge, so it is refused"
     return 1
   fi
-  if [ -n "$np_v_core_at" ] && [ -z "$np_v_builds" ]; then
-    np_variant_say "$1 changes $np_v_core_at, which is Wine itself rather than a layer beside it, so it has to name the build it was made for: build = $np_build"
+  if [ -z "$np_v_builds" ] && np_v_hit=$(np_variant_wine_hit "$np_v_src" "$np_v_dst") \
+     && [ -n "$np_v_hit" ]; then
+    np_variant_say "$1 replaces $np_v_hit, which is Wine's own, so it has to name the build it was made for: build = $np_build"
     return 1
   fi
   return 0

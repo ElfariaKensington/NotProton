@@ -258,17 +258,23 @@ CONF
 ok "a tree the runner has no directory for falls back" "$(resolve 'nowhere')" "$base"
 logged "and says nothing landed" "nowhere has nothing for x86_64 that lands in this runner"
 
-echo "== wine itself has to name its build"
+echo "== replacing wine's own files needs a build"
 : > "$work/log"
 mkdir -p "$work/trees/winefix/x86_64-windows" "$work/trees/winefix/x86_64-unix"
-dll "$work/trees/winefix/x86_64-windows/win32u.dll" fixed
-printf 'unix half\n' > "$work/trees/winefix/x86_64-unix/win32u.so"
+dll "$work/trees/winefix/x86_64-windows/newthing.dll" new
+printf 'unix half\n' > "$work/trees/winefix/x86_64-unix/newthing.so"
 desc winefix <<CONF
 src = trees/winefix
 dst = lib/wine
 CONF
-ok "a tree landing in lib/wine without a build falls back" "$(resolve 'winefix')" "$base"
-logged "and says which build to name" "changes lib/wine/x86_64-unix, which is Wine itself"
+got=$(resolve 'winefix')
+ok "adding files to lib/wine needs no build" "$got" "$(newest winefix)"
+dll "$work/trees/winefix/x86_64-windows/win32u.dll" fixed
+ok "nor does a file this runner does not ship" "$(resolve 'winefix')" "$(newest winefix)"
+dll "$base/lib/wine/x86_64-windows/win32u.dll" stock
+: > "$work/log"
+ok "replacing one this runner ships without a build falls back" "$(resolve 'winefix')" "$base"
+logged "and names the file" "winefix replaces lib/wine/x86_64-windows/win32u.dll, which is Wine's own"
 logged "and gives the line to add" "build = 26.3"
 desc winefix <<CONF
 src   = trees/winefix
@@ -287,17 +293,18 @@ build = 27.0
 CONF
 ok "naming another build falls back" "$(resolve 'winefix')" "$base"
 logged "and says what it was for" "winefix is for 27.0 and this runner is 26.3"
-# dst "." with a lib folder is judged by where it lands, not by dst alone.
+# The same file reached from dst "." and in another case is still Wine's.
 : > "$work/log"
 mkdir -p "$work/trees/dotdst/lib/wine/x86_64-windows"
-dll "$work/trees/dotdst/lib/wine/x86_64-windows/win32u.dll" dot
+dll "$work/trees/dotdst/lib/wine/x86_64-windows/WIN32U.DLL" dot
 desc dotdst <<CONF
 src = trees/dotdst
 dst = .
 CONF
-ok "a tree laid over the whole runner is Wine itself too" "$(resolve 'dotdst')" "$base"
-logged "and says where it lands" "dotdst changes lib, which is Wine itself"
-# A standalone layer reached through a parent dst is still standalone.
+ok "a tree laid over the whole runner is judged by its files" "$(resolve 'dotdst')" "$base"
+logged "and names the file" "dotdst replaces lib/wine/x86_64-windows/WIN32U.DLL"
+# Replacing DXMT's files is not Wine.
+dll "$base/lib/dxmt/x86_64-windows/dxgi.dll" stock
 mkdir -p "$work/trees/viaparent/dxmt/x86_64-windows"
 dll "$work/trees/viaparent/dxmt/x86_64-windows/dxgi.dll" parent
 desc viaparent <<CONF
@@ -305,7 +312,8 @@ src = trees/viaparent
 dst = lib
 CONF
 got=$(resolve 'viaparent')
-ok "lib/dxmt reached from dst = lib needs no build" "$got" "$(newest viaparent)"
+ok "replacing a DXMT file needs no build" "$got" "$(newest viaparent)"
+rm -f "$base/lib/dxmt/x86_64-windows/dxgi.dll"
 
 echo "== the steam bridge is not a variant's to change"
 for f in x86_64-windows/ntdll.dll x86_64-unix/ntdll.so x86_64-windows/lsteamclient.dll x86_64-unix/lsteamclient.so; do

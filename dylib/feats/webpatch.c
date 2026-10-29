@@ -629,25 +629,45 @@ static void var_norm(char *out, size_t size, const char *a, const char *b) {
     }
 }
 
-static int var_layer(const char *p, const char *layer, int digit) {
-    size_t n = strlen(layer);
-    if (strncmp(p, layer, n) != 0) return 0;
-    p += n;
-    if (digit && *p >= '0' && *p <= '9') p++;
-    return !*p || *p == '/';
+static int var_wine_path(const char *p) {
+    static const char *const own[] = { "bin/", "share/wine/", "lib/wine/", "lib64/wine/" };
+    for (size_t i = 0; i < sizeof(own) / sizeof(*own); i++)
+        if (strncasecmp(p, own[i], strlen(own[i])) == 0) return 1;
+    return 0;
 }
 
-// Layers CrossOver ships beside Wine. Anything else is Wine itself and only fits the build it was compiled against.
-static int var_standalone(const char *p) {
-    return var_layer(p, "lib/dxmt", 0) || var_layer(p, "lib/dxvk", 0)
-        || var_layer(p, "lib/apple_gptk", 1) || var_layer(p, "lib64/apple_gptk", 1);
-}
+// Overwriting a file Wine ships ties a variant to its build. New files and DXMT or D3DMetal folders don't.
+static int var_wine_hit(const np_var_t *v, const char *runner, const char *rel, int depth,
+                        char *hit, size_t size) {
+    char dir[2048], path[2048], land[2048], at[4096];
+    struct dirent *de;
+    struct stat st;
+    DIR *d;
+    int found = 0;
 
-static void var_landing(char *core, size_t size, const char *dst, const char *name) {
-    char l[2048];
-    if (*core) return;
-    var_norm(l, sizeof(l), dst, name);
-    if (!var_standalone(l)) snprintf(core, size, "%s", *l ? l : ".");
+    if (depth > 16) return 0;
+    snprintf(dir, sizeof(dir), "%s%s%s", v->src, *rel ? "/" : "", rel);
+    if (!(d = opendir(dir))) return 0;
+    while (!found && (de = readdir(d))) {
+        if (de->d_name[0] == '.') continue;
+        if (snprintf(path, sizeof(path), "%s%s%s", rel, *rel ? "/" : "", de->d_name) >= (int)sizeof(path)) continue;
+        snprintf(at, sizeof(at), "%s/%s", v->src, path);
+        if (lstat(at, &st) != 0) continue;
+        if (S_ISDIR(st.st_mode)) {
+            found = var_wine_hit(v, runner, path, depth + 1, hit, size);
+            continue;
+        }
+        if (!S_ISREG(st.st_mode)) continue;
+        var_norm(land, sizeof(land), v->dst, path);
+        if (!var_wine_path(land)) continue;
+        snprintf(at, sizeof(at), "%s/CrossOver/%s", runner, land);
+        if (stat(at, &st) == 0 && S_ISREG(st.st_mode)) {
+            snprintf(hit, size, "%s", land);
+            found = 1;
+        }
+    }
+    closedir(d);
+    return found;
 }
 
 static int var_has(const char *packed, const char *want) {
@@ -660,15 +680,13 @@ static int var_has(const char *packed, const char *want) {
 // land in dst, and each folder lands where dst has one of the same name. A folder named
 // for an architecture only counts for the runner that runs it, and a tree naming any
 // architecture has to land one this runner runs, or arm64 Wine would get x86_64 files.
-static int var_fits(const np_var_t *v, const char *runner, const char *arch,
-                    char *core, size_t core_size) {
+static int var_fits(const np_var_t *v, const char *runner, const char *arch) {
     char path[2048], at[2048];
     struct dirent *de;
     struct stat st;
     DIR *d;
     int lands = 0, named = 0, matched = 0;
 
-    *core = 0;
     if (!(d = opendir(v->src))) return 0;
     while ((de = readdir(d))) {
         const char *a;
@@ -678,19 +696,13 @@ static int var_fits(const np_var_t *v, const char *runner, const char *arch,
         if (lstat(path, &st) != 0) continue;
         if (S_ISREG(st.st_mode)) {
             if (snprintf(at, sizeof(at), "%s/CrossOver/%s", runner, v->dst) < (int)sizeof(at)
-                && var_is_dir(at)) {
-                lands = 1;
-                var_landing(core, core_size, v->dst, NULL);
-            }
+                && var_is_dir(at)) lands = 1;
             continue;
         }
         if (!S_ISDIR(st.st_mode) || !var_holds_file(path, 0)) continue;
         here = snprintf(at, sizeof(at), "%s/CrossOver/%s/%s", runner, v->dst, de->d_name)
                < (int)sizeof(at) && var_is_dir(at);
-        if (here) {
-            lands = 1;
-            var_landing(core, core_size, v->dst, de->d_name);
-        }
+        if (here) lands = 1;
         if ((a = var_arch_of(de->d_name))) {
             named = 1;
             if (here && strcmp(a, arch) == 0) matched = 1;
@@ -700,9 +712,7 @@ static int var_fits(const np_var_t *v, const char *runner, const char *arch,
     // A remove lands when the runner has what it names.
     for (const char *r = v->removes; *r; r += strlen(r) + 1) {
         if (snprintf(at, sizeof(at), "%s/CrossOver/%s/%s", runner, v->dst, r) >= (int)sizeof(at)) continue;
-        if (lstat(at, &st) != 0) continue;
-        lands = 1;
-        var_landing(core, core_size, v->dst, r);
+        if (lstat(at, &st) == 0) lands = 1;
     }
     return lands && (!named || matched);
 }
@@ -802,7 +812,7 @@ static void var_build(void) {
     for (int i = 0; i < n; i++) {
         int fits = 0, unpinned = 0;
         char tools[NP_WEBPATCH_BUILDS_MAX * (NP_TOOL_NAME_MAX + 3) + 1] = "";
-        char hit[256], core[2048];
+        char hit[2048];
 
         if (!*list[i].removes && !var_holds_file(list[i].src, 0)) {
             NP_WARN("variants: %s holds no files at %s, not offered", list[i].name, list[i].src);
@@ -818,11 +828,11 @@ static void var_build(void) {
             if (*list[i].builds && !var_has(list[i].builds, g_var_build[t])) continue;
             if (snprintf(runner, sizeof(runner), "%s/crossover-%s", runners, g_var_build[t])
                 >= (int)sizeof(runner)) continue;
-            if (!var_fits(&list[i], runner, g_var_arch[t], core, sizeof(core))) continue;
-            if (*core && !*list[i].builds) {
+            if (!var_fits(&list[i], runner, g_var_arch[t])) continue;
+            if (!*list[i].builds && var_wine_hit(&list[i], runner, "", 0, hit, sizeof(hit))) {
                 if (!unpinned++)
-                    NP_WARN("variants: %s changes %s, which is Wine itself, and names no build, not offered",
-                            list[i].name, core);
+                    NP_WARN("variants: %s replaces %s, which is Wine's own, and names no build, not offered there",
+                            list[i].name, hit);
                 continue;
             }
             snprintf(tools + strlen(tools), sizeof(tools) - strlen(tools), "%s\"%s\"",

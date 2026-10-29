@@ -481,7 +481,7 @@ int main(void) {
         ok(strstr(j, "absolute") == NULL, "an absolute dst is refused");
     }
 
-    puts("== wine itself has to name its build");
+    puts("== replacing wine's own files needs a build");
     clear_vars();
     make_dir("mkdir -p '%s/Library/Application Support/notproton/runners/"
              "crossover-26.3.0/CrossOver/lib/wine/'{x86_64-windows,x86_64-unix}%s", g_home, "");
@@ -489,20 +489,29 @@ int main(void) {
              "crossover-27.0-fex/CrossOver/lib/wine/'{x86_64,aarch64}'-windows'%s", g_home, "");
     make_asset("trees/winefix/x86_64-windows/win32u.dll");
     write_var("winefix.conf", "[winefix]\nsrc = trees/winefix\ndst = lib/wine\n");
-    ok(strstr(vars_json(), "{k:\"winefix\",l:\"winefix\",v:\"winefix\",t:[]}") != NULL,
-       "a tree landing in lib/wine without a build is offered nowhere");
+    ok(strstr(vars_json(), "t:[\"notproton-26.3\",\"notproton-fex-rosetta\"]") != NULL,
+       "adding a file to lib/wine needs no build");
+    make_asset("Library/Application Support/notproton/runners/crossover-26.3.0/CrossOver/lib/wine/"
+               "x86_64-windows/win32u.dll");
+    ok(strstr(vars_json(), "t:[\"notproton-fex-rosetta\"]") != NULL,
+       "replacing one a runner ships is left out on that runner only");
     write_var("winefix.conf", "[winefix]\nsrc = trees/winefix\ndst = lib/wine\nbuild = 26.3.0\n");
     ok(strstr(vars_json(), "t:[\"notproton-26.3\"]") != NULL, "naming a build offers it to that build's tool");
     write_var("winefix.conf", "[winefix]\nsrc = trees/winefix\ndst = lib/wine\nbuild = 27.0-fex\n");
     ok(strstr(vars_json(), "t:[\"notproton-fex-rosetta\"]") != NULL,
        "and only to the tools on that build that run the tree's architecture");
-    write_var("winefix.conf", "[winefix]\nsrc = trees/winefix\ndst = .\nbuild = 26.3.0\n");
-    ok(strstr(vars_json(), "t:[]") != NULL, "a dst that only lands through folders the tree lacks offers nothing");
     clear_vars();
+    make_asset("trees/dotdst/lib/wine/x86_64-windows/WIN32U.DLL");
+    write_var("dotdst.conf", "[dotdst]\nsrc = trees/dotdst\ndst = .\n");
+    ok(strstr(vars_json(), "{k:\"dotdst\",l:\"dotdst\",v:\"dotdst\",t:[\"notproton\",\"notproton-fex-rosetta\"]}") != NULL,
+       "a file reached from dst = . in another case is still Wine's");
+    clear_vars();
+    make_asset("Library/Application Support/notproton/runners/crossover-26.3.0/CrossOver/lib/dxmt/"
+               "x86_64-windows/dxgi.dll");
     make_asset("trees/viaparent/dxmt/x86_64-windows/dxgi.dll");
     write_var("viaparent.conf", "[viaparent]\nsrc = trees/viaparent\ndst = lib\n");
     ok(strstr(vars_json(), "t:[\"notproton\",\"notproton-26.3\",\"notproton-fex-rosetta\"]") != NULL,
-       "lib/dxmt reached from dst = lib needs no build");
+       "replacing a DXMT file needs no build");
 
     puts("== the steam bridge is not a variant's to change");
     clear_vars();
