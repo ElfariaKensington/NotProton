@@ -553,6 +553,9 @@ typedef struct {
     char variant[NP_VAR_STR];
     char src[1024];
     char dst[NP_VAR_STR];
+    // NUL-separated, so any record conf.c admits fits.
+    char builds[NP_CONF_REC_BUF];
+    char removes[NP_CONF_REC_BUF];
 } np_var_t;
 
 static _Thread_local char g_var_tool[NP_WEBPATCH_BUILDS_MAX][NP_TOOL_NAME_MAX];
@@ -605,7 +608,8 @@ static int var_holds_file(const char *dir, int depth) {
     while (!found && (de = readdir(d))) {
         if (de->d_name[0] == '.') continue;
         if (snprintf(path, sizeof(path), "%s/%s", dir, de->d_name) >= (int)sizeof(path)) continue;
-        if (stat(path, &st) != 0) continue;
+        // find -type f in compat_run.sh never follows a link.
+        if (lstat(path, &st) != 0) continue;
         if (S_ISREG(st.st_mode)) found = 1;
         else if (S_ISDIR(st.st_mode)) found = var_holds_file(path, depth + 1);
     }
@@ -613,40 +617,126 @@ static int var_holds_file(const char *dir, int depth) {
     return found;
 }
 
+// ./lib/ and lib are the same place, as np_variant_norm in compat_run.sh reads them.
+static void var_norm(char *out, size_t size, const char *a, const char *b) {
+    char in[2048], *save = NULL;
+    size_t n = 0;
+    snprintf(in, sizeof(in), "%s/%s", a, b ? b : "");
+    out[0] = 0;
+    for (char *seg = strtok_r(in, "/", &save); seg; seg = strtok_r(NULL, "/", &save)) {
+        if (strcmp(seg, ".") == 0) continue;
+        n += (size_t)snprintf(out + n, n < size ? size - n : 0, "%s%s", n ? "/" : "", seg);
+    }
+}
+
+static int var_layer(const char *p, const char *layer, int digit) {
+    size_t n = strlen(layer);
+    if (strncmp(p, layer, n) != 0) return 0;
+    p += n;
+    if (digit && *p >= '0' && *p <= '9') p++;
+    return !*p || *p == '/';
+}
+
+// Layers CrossOver ships beside Wine. Anything else is Wine itself and only fits the build it was compiled against.
+static int var_standalone(const char *p) {
+    return var_layer(p, "lib/dxmt", 0) || var_layer(p, "lib/dxvk", 0)
+        || var_layer(p, "lib/apple_gptk", 1) || var_layer(p, "lib64/apple_gptk", 1);
+}
+
+static void var_landing(char *core, size_t size, const char *dst, const char *name) {
+    char l[2048];
+    if (*core) return;
+    var_norm(l, sizeof(l), dst, name);
+    if (!var_standalone(l)) snprintf(core, size, "%s", *l ? l : ".");
+}
+
+static int var_has(const char *packed, const char *want) {
+    for (const char *p = packed; *p; p += strlen(p) + 1)
+        if (strcmp(p, want) == 0) return 1;
+    return 0;
+}
+
 // The rule np_variant_fits in compat_run.sh applies, read from the top of src: files there
 // land in dst, and each folder lands where dst has one of the same name. A folder named
 // for an architecture only counts for the runner that runs it, and a tree naming any
 // architecture has to land one this runner runs, or arm64 Wine would get x86_64 files.
-static int var_fits(const np_var_t *v, const char *runner, const char *arch) {
+static int var_fits(const np_var_t *v, const char *runner, const char *arch,
+                    char *core, size_t core_size) {
     char path[2048], at[2048];
     struct dirent *de;
     struct stat st;
     DIR *d;
     int lands = 0, named = 0, matched = 0;
 
+    *core = 0;
     if (!(d = opendir(v->src))) return 0;
     while ((de = readdir(d))) {
         const char *a;
         int here;
         if (de->d_name[0] == '.') continue;
         if (snprintf(path, sizeof(path), "%s/%s", v->src, de->d_name) >= (int)sizeof(path)) continue;
-        if (stat(path, &st) != 0) continue;
+        if (lstat(path, &st) != 0) continue;
         if (S_ISREG(st.st_mode)) {
             if (snprintf(at, sizeof(at), "%s/CrossOver/%s", runner, v->dst) < (int)sizeof(at)
-                && var_is_dir(at)) lands = 1;
+                && var_is_dir(at)) {
+                lands = 1;
+                var_landing(core, core_size, v->dst, NULL);
+            }
             continue;
         }
         if (!S_ISDIR(st.st_mode) || !var_holds_file(path, 0)) continue;
         here = snprintf(at, sizeof(at), "%s/CrossOver/%s/%s", runner, v->dst, de->d_name)
                < (int)sizeof(at) && var_is_dir(at);
-        if (here) lands = 1;
+        if (here) {
+            lands = 1;
+            var_landing(core, core_size, v->dst, de->d_name);
+        }
         if ((a = var_arch_of(de->d_name))) {
             named = 1;
             if (here && strcmp(a, arch) == 0) matched = 1;
         }
     }
     closedir(d);
+    // A remove lands when the runner has what it names.
+    for (const char *r = v->removes; *r; r += strlen(r) + 1) {
+        if (snprintf(at, sizeof(at), "%s/CrossOver/%s/%s", runner, v->dst, r) >= (int)sizeof(at)) continue;
+        if (lstat(at, &st) != 0) continue;
+        lands = 1;
+        var_landing(core, core_size, v->dst, r);
+    }
     return lands && (!named || matched);
+}
+
+// ntdll.dll carries the Steam bridge patch and ntdll.so has to match it, so variants keep off both and off lsteamclient.
+static int var_bridge_hit(const np_var_t *v, char *hit, size_t size) {
+    static const char *const slots[] = { "x86_64", "i386", "aarch64", "arm64ec" };
+    static const char *const files[] = { "windows/ntdll.dll", "windows/lsteamclient.dll",
+                                         "unix/ntdll.so", "unix/lsteamclient.so" };
+    char nd[2048], p[256], path[2048];
+    struct stat st;
+
+    var_norm(nd, sizeof(nd), v->dst, NULL);
+    for (size_t s = 0; s < sizeof(slots) / sizeof(*slots); s++)
+        for (size_t f = 0; f < sizeof(files) / sizeof(*files); f++) {
+            const char *rel;
+            size_t n = strlen(nd);
+            snprintf(p, sizeof(p), "lib/wine/%s-%s", slots[s], files[f]);
+            for (const char *r = v->removes; *r; r += strlen(r) + 1) {
+                char nr[2048];
+                var_norm(nr, sizeof(nr), nd, r);
+                // APFS ignores case, so NTDLL.DLL is ntdll.dll.
+                if (strcasecmp(nr, p) == 0) { snprintf(hit, size, "%s", p); return 1; }
+            }
+            if (!n) rel = p;
+            else if (strncasecmp(p, nd, n) == 0 && p[n] == '/') rel = p + n + 1;
+            else continue;
+            if (snprintf(path, sizeof(path), "%s/%s", v->src, rel) >= (int)sizeof(path)) continue;
+            if (lstat(path, &st) == 0 && S_ISREG(st.st_mode)) {
+                snprintf(hit, size, "%s", p);
+                return 1;
+            }
+        }
+    return 0;
 }
 
 typedef struct { np_var_t *list; int count; const char *home; } var_ctx_t;
@@ -655,6 +745,7 @@ static const char *var_take(const np_conf_rec_t *rec, void *ctx, const char **de
     var_ctx_t *vc = ctx;
     np_var_t *v = &vc->list[vc->count];
     const char *n, *val;
+    size_t nb = 0, nr = 0;
     int it = 0;
 
     (void)detail;
@@ -666,6 +757,13 @@ static const char *var_take(const np_conf_rec_t *rec, void *ctx, const char **de
         else if (strcmp(n, "src") == 0) {
             if (!resolve_home_path(v->src, sizeof(v->src), vc->home, val)) return NP_CONF_LIMIT;
         } else if (strcmp(n, "dst") == 0) snprintf(v->dst, sizeof(v->dst), "%s", val);
+        else if (strcmp(n, "build") == 0) {
+            memcpy(v->builds + nb, val, strlen(val) + 1);
+            nb += strlen(val) + 1;
+        } else if (strcmp(n, "remove") == 0) {
+            memcpy(v->removes + nr, val, strlen(val) + 1);
+            nr += strlen(val) + 1;
+        }
     }
     if (!*v->label) snprintf(v->label, sizeof(v->label), "%s", v->name);
     if (!*v->variant) snprintf(v->variant, sizeof(v->variant), "%s", v->name);
@@ -702,18 +800,31 @@ static void var_build(void) {
     np_support_path(runners, sizeof(runners), home, "runners");
     if (!out_put(&rows, "[", 1)) goto done;
     for (int i = 0; i < n; i++) {
-        int fits = 0;
+        int fits = 0, unpinned = 0;
         char tools[NP_WEBPATCH_BUILDS_MAX * (NP_TOOL_NAME_MAX + 3) + 1] = "";
+        char hit[256], core[2048];
 
-        if (!var_holds_file(list[i].src, 0)) {
+        if (!*list[i].removes && !var_holds_file(list[i].src, 0)) {
             NP_WARN("variants: %s holds no files at %s, not offered", list[i].name, list[i].src);
+            continue;
+        }
+        if (var_bridge_hit(&list[i], hit, sizeof(hit))) {
+            NP_WARN("variants: %s would change %s, which carries NotProton's Steam bridge, not offered",
+                    list[i].name, hit);
             continue;
         }
         for (size_t t = 0; t < g_var_tools; t++) {
             char runner[2048];
+            if (*list[i].builds && !var_has(list[i].builds, g_var_build[t])) continue;
             if (snprintf(runner, sizeof(runner), "%s/crossover-%s", runners, g_var_build[t])
                 >= (int)sizeof(runner)) continue;
-            if (!var_fits(&list[i], runner, g_var_arch[t])) continue;
+            if (!var_fits(&list[i], runner, g_var_arch[t], core, sizeof(core))) continue;
+            if (*core && !*list[i].builds) {
+                if (!unpinned++)
+                    NP_WARN("variants: %s changes %s, which is Wine itself, and names no build, not offered",
+                            list[i].name, core);
+                continue;
+            }
             snprintf(tools + strlen(tools), sizeof(tools) - strlen(tools), "%s\"%s\"",
                      fits++ ? "," : "", g_var_tool[t]);
         }

@@ -117,12 +117,27 @@ dxmt-upstream	dst	lib/wine
 plain	src	code/plain
 plain	dst	lib/wine
 
+== variants/15-build-remove.conf
+wine-fix	label	Wine fix
+wine-fix	src	code/wine-fix/artifacts
+wine-fix	dst	lib/wine
+wine-fix	build	27.0.0.41073
+wine-fix	build	27.0.0.41073-fex
+trimmed	src	code/trimmed
+trimmed	dst	.
+trimmed	remove	lib/wine/x86_64-windows/winegstreamer.dll
+trimmed	remove	./lib/wine/x86_64-unix/winegstreamer.so
+
 == variants/20-faults.conf
 !	no-src	missing-required:src
 !	escapes	bad-value:dst
 !	absolute	bad-value:dst
 !	stranger	unknown-field:tools
 !	BAD ID	bad-id
+!	bad-build	bad-value:build
+!	escaping-remove	bad-value:remove
+!	absolute-remove	bad-value:remove
+!	remove-nothing	bad-value:remove
 
 == variants/30-cap.conf
 cap-00	src	code/cap
@@ -179,8 +194,6 @@ cap-25	src	code/cap
 cap-25	dst	lib/wine
 cap-26	src	code/cap
 cap-26	dst	lib/wine
-cap-27	src	code/cap
-cap-27	dst	lib/wine
-cap-28	src	code/cap
-cap-28	dst	lib/wine
+!	cap-27	limit
+!	cap-28	limit
 !	cap-29	limit

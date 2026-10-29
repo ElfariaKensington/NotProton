@@ -141,12 +141,13 @@ RECORDS
     done
 }
 
-# A runner is named crossover-<build>+<name>+..., so a variant owns any directory carrying
-# its name as one of the components after the build.
+# A runner is named crossover-<build>+<name>+...@<hash>, so a variant owns any directory
+# carrying its name as one of the components after the build.
 built_runners() {
     for d in "$runners"/crossover-*+*/; do
         [ -d "$d" ] || continue
-        case "$(basename "${d%/}")+" in
+        b=$(basename "${d%/}")
+        case "${b%@*}+" in
             *"+$1+"*) printf '%s\n' "${d%/}" ;;
         esac
     done

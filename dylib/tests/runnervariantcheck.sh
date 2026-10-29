@@ -12,12 +12,14 @@ case "$block" in
   *np_conf_normalise*np_variant_overlay*np_variant_resolve*) ;;
   *) echo "FAIL: the variant block was not found in $SRC"; exit 1 ;;
 esac
+switch_fn=$(sed -n '/^note_variant_switch() {/,/^}/p' "$SRC")
+[ -n "$switch_fn" ] || { echo "FAIL: note_variant_switch was not found in $SRC"; exit 1; }
 
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 base="$work/runners/crossover-26.3/CrossOver"
-mkdir -p "$base/lib/wine" "$base/lib/dxmt/x86_64-windows" "$base/lib/dxmt/x86_64-unix" \
-         "$work/variants"
+mkdir -p "$base/lib/wine/x86_64-windows" "$base/lib/wine/x86_64-unix" "$base/bin" \
+         "$base/lib/dxmt/x86_64-windows" "$base/lib/dxmt/x86_64-unix" "$work/variants"
 printf '%s\n' "$block" > "$work/block.sh"
 
 # A PE winebuild has marked as a builtin carries the marker over the DOS stub at 0x40.
@@ -40,6 +42,18 @@ resolve() {
     HOME="$work" np_support="$work" np_build="26.3" np_flavor="${3:-rosetta}" \
     log="$work/log" PATH="$PATH" \
     sh -c '. "$1/block.sh"; printf "%s" "$CX_ROOT"' sh "$work"
+}
+
+# Each build is named crossover-<build>+<names>@<hash>, so the newest one is the current one.
+# shellcheck disable=SC2012 # names made by the block, sorted by time
+newest() {
+  d=$(ls -dt "$work/runners/crossover-26.3+$1"@* 2>/dev/null | head -1)
+  [ -n "$d" ] && printf '%s/CrossOver' "$d"
+}
+builds_of() {
+  n=0
+  for d in "$work/runners/crossover-26.3+$1"@*; do [ ! -d "$d" ] || n=$((n + 1)); done
+  printf '%s' "$n"
 }
 
 fail=0
@@ -66,8 +80,12 @@ variant = Backend
 src     = trees/one
 dst     = lib/dxmt
 CONF
-built="$work/runners/crossover-26.3+one/CrossOver"
-ok "the variant runner is used" "$(resolve 'one')" "$built"
+got=$(resolve 'one')
+built=$(newest one)
+case "$got" in
+  "$work/runners/crossover-26.3+one@"????????????/CrossOver) echo "  ok    the variant runner is used, named for its contents" ;;
+  *) echo "  FAIL  the variant runner is used, named for its contents (got [$got])"; fail=1 ;;
+esac
 ok "the tree is copied in" "$(cat "$built/lib/dxmt/x86_64-windows/d3d11.dll" | tr -d '\000')" \
   "Wine builtin DLLone"
 ok "every arch directory is copied" "$(cat "$built/lib/dxmt/x86_64-unix/winemetal.so")" "unix half"
@@ -84,22 +102,32 @@ ok "nothing was rebuilt" "$([ -f "$marker" ] && echo kept)" "kept"
 
 echo "== a changed tree is rebuilt"
 dll "$work/trees/one/x86_64-windows/d3d11.dll" twotwotwo
-ok "the runner is used" "$(resolve 'one')" "$built"
+old=$built
+got=$(resolve 'one')
+built=$(newest one)
+ok "the new build is used" "$got" "$built"
+ok "and is not the old one" "$([ "$built" != "$old" ] && echo new)" "new"
 ok "the new tree is copied in" "$(cat "$built/lib/dxmt/x86_64-windows/d3d11.dll" | tr -d '\000')" \
   "Wine builtin DLLtwotwotwo"
-ok "the rebuild is a fresh clone" "$([ -f "$marker" ] || echo gone)" "gone"
-logged "the build is reported" "building crossover-26.3+one"
+ok "the rebuild is a fresh clone" "$([ -f "$built/lib/wine/not-from-the-tree" ] || echo gone)" "gone"
+logged "the build is reported" "building crossover-26.3+one@"
+ok "the old build is kept for a while, since a launch may have just resolved it" "$(builds_of one)" "2"
+touch -t 202001010000 "${old%/CrossOver}/.notproton-used"
+resolve 'one' > /dev/null
+ok "and goes once it has sat unused" "$(builds_of one)" "1"
+logged "which is reported" "which nothing uses any more"
 
 echo "== a re-patched base runner rebuilds the variant"
-: > "$marker"
-mkdir -p "$base/lib/wine/x86_64-windows"
+old=$built
 dll "$base/lib/wine/x86_64-windows/ntdll.dll" patched
-ok "the runner is used" "$(resolve 'one')" "$built"
-ok "the variant was rebuilt from the updated base" "$([ -f "$marker" ] || echo gone)" "gone"
+ok "the runner is used" "$(resolve 'one')" "$(newest one)"
+built=$(newest one)
+ok "the variant was rebuilt from the updated base" "$([ "$built" != "$old" ] && echo rebuilt)" "rebuilt"
 ok "the updated base ntdll is in the variant" \
   "$(tr -d '\000' < "$built/lib/wine/x86_64-windows/ntdll.dll")" "Wine builtin DLLpatched"
 
 echo "== a rebuild can be forced"
+marker="$built/lib/wine/not-from-the-tree"
 : > "$marker"
 ok "the runner is used" "$(resolve 'one' 1)" "$built"
 ok "the runner was rebuilt anyway" "$([ -f "$marker" ] || echo gone)" "gone"
@@ -170,8 +198,8 @@ variant = Backend
 src = trees/both
 dst = lib/dxmt
 CONF
-bothruns="$work/runners/crossover-26.3+bothslots/CrossOver"
-ok "a tree carrying both architectures is used" "$(resolve 'bothslots')" "$bothruns"
+bothruns=$(resolve 'bothslots')
+ok "a tree carrying both architectures is used" "$bothruns" "$(newest bothslots)"
 ok "the slot this runner has is laid down" \
   "$(tr -d '\000' < "$bothruns/lib/dxmt/x86_64-windows/d3d11.dll")" "Wine builtin DLLbothbothboth"
 ok "the slot it does not have is left out" \
@@ -184,10 +212,11 @@ echo "== a runner holding both slots takes only the one it runs"
 # panel; if these two disagree, one offers a variant the other refuses.
 : > "$work/log"
 mkdir -p "$base/lib/dxmt/aarch64-windows"
-ok "an x86_64 tree is still used where x86_64 is what runs" "$(resolve 'one' '' rosetta)" "$built"
+ok "an x86_64 tree is still used where x86_64 is what runs" "$(resolve 'one' '' rosetta)" "$(newest one)"
 ok "and is refused where arm64 Wine runs" "$(resolve 'one' '' fex)" "$base"
 logged "which says what the runner runs" "has nothing for aarch64 that lands in this runner"
-ok "a tree carrying both is used either way" "$(resolve 'bothslots' 1 fex)" "$bothruns"
+bothruns=$(resolve 'bothslots' 1 fex)
+ok "a tree carrying both is used either way" "$bothruns" "$(newest bothslots)"
 ok "and the slot that runner runs is laid down once the runner has it" \
   "$(tr -d '\000' < "$bothruns/lib/dxmt/aarch64-windows/d3d11.dll")" "Wine builtin DLLarmarmarm"
 # The check has to run on every launch, not only when the variant is built: a variant
@@ -213,8 +242,8 @@ variant = Backend
 src = trees/flat
 dst = lib/dxmt
 CONF
-ok "a tree naming no architecture is left alone" \
-  "$(resolve 'flat' '' fex)" "$work/runners/crossover-26.3+flat/CrossOver"
+got=$(resolve 'flat' '' fex)
+ok "a tree naming no architecture is left alone" "$got" "$(newest flat)"
 
 # A tree naming no architecture skips the arch check, but still has to land somewhere.
 : > "$work/log"
@@ -229,6 +258,144 @@ CONF
 ok "a tree the runner has no directory for falls back" "$(resolve 'nowhere')" "$base"
 logged "and says nothing landed" "nowhere has nothing for x86_64 that lands in this runner"
 
+echo "== wine itself has to name its build"
+: > "$work/log"
+mkdir -p "$work/trees/winefix/x86_64-windows" "$work/trees/winefix/x86_64-unix"
+dll "$work/trees/winefix/x86_64-windows/win32u.dll" fixed
+printf 'unix half\n' > "$work/trees/winefix/x86_64-unix/win32u.so"
+desc winefix <<CONF
+src = trees/winefix
+dst = lib/wine
+CONF
+ok "a tree landing in lib/wine without a build falls back" "$(resolve 'winefix')" "$base"
+logged "and says which build to name" "changes lib/wine/x86_64-unix, which is Wine itself"
+logged "and gives the line to add" "build = 26.3"
+desc winefix <<CONF
+src   = trees/winefix
+dst   = lib/wine
+build = 27.0
+build = 26.3
+CONF
+got=$(resolve 'winefix')
+ok "naming this build among others is used" "$got" "$(newest winefix)"
+ok "and the fix is in it" "$(tr -d '\000' < "$got/lib/wine/x86_64-windows/win32u.dll")" "Wine builtin DLLfixed"
+: > "$work/log"
+desc winefix <<CONF
+src   = trees/winefix
+dst   = lib/wine
+build = 27.0
+CONF
+ok "naming another build falls back" "$(resolve 'winefix')" "$base"
+logged "and says what it was for" "winefix is for 27.0 and this runner is 26.3"
+# dst "." with a lib folder is judged by where it lands, not by dst alone.
+: > "$work/log"
+mkdir -p "$work/trees/dotdst/lib/wine/x86_64-windows"
+dll "$work/trees/dotdst/lib/wine/x86_64-windows/win32u.dll" dot
+desc dotdst <<CONF
+src = trees/dotdst
+dst = .
+CONF
+ok "a tree laid over the whole runner is Wine itself too" "$(resolve 'dotdst')" "$base"
+logged "and says where it lands" "dotdst changes lib, which is Wine itself"
+# A standalone layer reached through a parent dst is still standalone.
+mkdir -p "$work/trees/viaparent/dxmt/x86_64-windows"
+dll "$work/trees/viaparent/dxmt/x86_64-windows/dxgi.dll" parent
+desc viaparent <<CONF
+src = trees/viaparent
+dst = lib
+CONF
+got=$(resolve 'viaparent')
+ok "lib/dxmt reached from dst = lib needs no build" "$got" "$(newest viaparent)"
+
+echo "== the steam bridge is not a variant's to change"
+for f in x86_64-windows/ntdll.dll x86_64-unix/ntdll.so x86_64-windows/lsteamclient.dll x86_64-unix/lsteamclient.so; do
+  : > "$work/log"
+  rm -rf "$work/trees/bridge"
+  mkdir -p "$work/trees/bridge/x86_64-windows" "$work/trees/bridge/x86_64-unix"
+  dll "$work/trees/bridge/x86_64-windows/win32u.dll" ok
+  dll "$work/trees/bridge/$f" bad
+  desc bridge <<CONF
+src   = trees/bridge
+dst   = lib/wine
+build = 26.3
+CONF
+  ok "a tree carrying $f falls back" "$(resolve 'bridge')" "$base"
+  logged "and names it" "would change lib/wine/$f, which carries NotProton's Steam bridge"
+done
+: > "$work/log"
+rm -rf "$work/trees/bridge"
+mkdir -p "$work/trees/bridge/x86_64-windows"
+dll "$work/trees/bridge/x86_64-windows/win32u.dll" ok
+desc bridge <<CONF
+src    = trees/bridge
+dst    = lib/wine
+build  = 26.3
+remove = ./x86_64-windows//ntdll.dll
+CONF
+ok "removing ntdll however it is spelled falls back" "$(resolve 'bridge')" "$base"
+logged "and names it" "would change lib/wine/x86_64-windows/ntdll.dll"
+: > "$work/log"
+desc bridge <<CONF
+src    = trees/bridge
+dst    = Lib/Wine
+build  = 26.3
+remove = X86_64-Windows/NTDLL.DLL
+CONF
+ok "or in another case, which APFS takes for the same file" "$(resolve 'bridge')" "$base"
+logged "and names it" "would change lib/wine/x86_64-windows/ntdll.dll"
+
+echo "== links in a tree are not followed"
+: > "$work/log"
+mkdir -p "$work/elsewhere/x86_64-windows"
+dll "$work/elsewhere/x86_64-windows/d3d11.dll" linked
+mkdir -p "$work/trees/linked"
+ln -s "$work/elsewhere/x86_64-windows" "$work/trees/linked/x86_64-windows"
+desc linked <<CONF
+src = trees/linked
+dst = lib/dxmt
+CONF
+ok "a linked folder lands nothing, as the panel sees it" "$(resolve 'linked')" "$base"
+logged "and says so" "linked has nothing for x86_64 that lands in this runner"
+
+echo "== removes"
+: > "$work/log"
+dll "$base/lib/dxmt/x86_64-windows/nvapi64.dll" stock
+mkdir -p "$base/lib/dxmt/x86_64-windows/afolder"
+mkdir -p "$work/trees/trim/x86_64-windows"
+dll "$work/trees/trim/x86_64-windows/d3d11.dll" trim
+desc trim <<CONF
+src    = trees/trim
+dst    = lib/dxmt
+remove = x86_64-windows/nvapi64.dll
+remove = x86_64-windows/afolder
+remove = x86_64-windows/never-there.dll
+CONF
+got=$(resolve 'trim')
+ok "a variant with removes is used" "$got" "$(newest trim)"
+ok "the file is gone from it" "$([ -e "$got/lib/dxmt/x86_64-windows/nvapi64.dll" ] || echo gone)" "gone"
+ok "and still in the base runner" "$([ -f "$base/lib/dxmt/x86_64-windows/nvapi64.dll" ] && echo kept)" "kept"
+ok "a folder is not removed" "$([ -d "$got/lib/dxmt/x86_64-windows/afolder" ] && echo kept)" "kept"
+logged "and says so" "afolder is a folder, and only files are removed"
+logged "a remove of nothing is reported" "never-there.dll is not in this runner"
+mkdir -p "$work/trees/emptytree"
+desc onlyremove <<CONF
+src    = trees/emptytree
+dst    = lib/dxmt
+remove = x86_64-windows/nvapi64.dll
+CONF
+got=$(resolve 'onlyremove')
+ok "a variant that only removes is used" "$got" "$(newest onlyremove)"
+ok "and removes" "$([ -e "$got/lib/dxmt/x86_64-windows/nvapi64.dll" ] || echo gone)" "gone"
+old=$(newest onlyremove)
+dll "$base/lib/dxmt/x86_64-windows/nvngx.dll" stock
+desc onlyremove <<CONF
+src    = trees/emptytree
+dst    = lib/dxmt
+remove = x86_64-windows/nvngx.dll
+CONF
+ok "changing a remove rebuilds" "$(resolve 'onlyremove')" "$(newest onlyremove)"
+ok "into a new runner" "$([ "$(newest onlyremove)" != "$old" ] && echo new)" "new"
+
 echo "== combinations"
 mkdir -p "$work/trees/other/x86_64-windows"
 dll "$work/trees/other/x86_64-windows/dxgi.dll" other
@@ -238,23 +405,27 @@ variant = Backend
 src = trees/other
 dst = lib/dxmt
 CONF
-both="$work/runners/crossover-26.3+one+other/CrossOver"
-ok "two variants build one runner" "$(resolve 'one+other')" "$both"
+both=$(resolve 'one+other')
+ok "two variants build one runner" "$both" "$(newest one+other)"
 ok "the first tree is in it" "$(cat "$both/lib/dxmt/x86_64-windows/d3d11.dll" | tr -d '\000')" \
   "Wine builtin DLLtwotwotwo"
 ok "the second tree is in it" "$(cat "$both/lib/dxmt/x86_64-windows/dxgi.dll" | tr -d '\000')" \
   "Wine builtin DLLother"
 ok "the order asked for does not matter" "$(resolve 'other+one')" "$both"
-ok "a repeated name does not repeat in the name" "$(resolve 'one+one')" "$built"
+ok "a repeated name does not repeat in the name" "$(resolve 'one+one')" "$(newest one)"
+: > "$work/log"
+got=$(resolve 'one+trim')
+ok "two variants touching one file still build" "$got" "$(newest one+trim)"
+ok "the later one's copy is used" "$(tr -d '\000' < "$got/lib/dxmt/x86_64-windows/d3d11.dll")" "Wine builtin DLLtrim"
+logged "and the overlap is reported" "trim changes lib/dxmt/x86_64-windows/d3d11.dll after an earlier variant did"
 
 echo "== a request naming something unusable"
 : > "$work/log"
-ok "the members that work are still used" "$(resolve 'one+gone')" "$built"
+ok "the members that work are still used" "$(resolve 'one+gone')" "$(newest one)"
 logged "and the rest is reported" "ignoring gone, which cannot be used"
 ok "a request of nothing but unusable names falls back" "$(resolve 'gone+typo')" "$base"
 # The runner is named for what went into it, not for what was asked for.
-ok "the runner is named for the members that worked" \
-  "$([ -d "$work/runners/crossover-26.3+one+gone" ] || echo absent)" "absent"
+ok "the runner is named for the members that worked" "$(builds_of one+gone)" "0"
 
 echo "== names"
 mkdir -p "$work/trees/under/x86_64-windows"
@@ -263,8 +434,8 @@ desc dxmt_dev <<CONF
 src = trees/under
 dst = lib/dxmt
 CONF
-ok "an id with an underscore is used, as the panel offers it" "$(resolve 'dxmt_dev')" \
-  "$work/runners/crossover-26.3+dxmt_dev/CrossOver"
+got=$(resolve 'dxmt_dev')
+ok "an id with an underscore is used, as the panel offers it" "$got" "$(newest dxmt_dev)"
 # Build ids carry "-" too (26.3-fex is a build), so a variant named fex must not land on it.
 fexbase="$work/runners/crossover-26.3-fex/CrossOver"
 mkdir -p "$fexbase/lib/wine"
@@ -273,8 +444,8 @@ desc fex <<CONF
 src = trees/under
 dst = lib/dxmt
 CONF
-ok "a variant named like another build gets its own runner" "$(resolve 'fex')" \
-  "$work/runners/crossover-26.3+fex/CrossOver"
+got=$(resolve 'fex')
+ok "a variant named like another build gets its own runner" "$got" "$(newest fex)"
 ok "and the build it is named like is untouched" "$([ -f "$fexbase/lib/wine/the-fex-build" ] && echo kept)" "kept"
 
 echo "== two launches at once"
@@ -283,17 +454,19 @@ dll "$work/trees/one/x86_64-windows/d3d11.dll" racerace
 resolve 'one' > "$work/race1" &
 resolve 'one' > "$work/race2" &
 wait
+built=$(newest one)
 ok "both get the runner" "$(cat "$work/race1")|$(cat "$work/race2")" "$built|$built"
 ok "it holds the tree both asked for" \
   "$(tr -d '\000' < "$built/lib/dxmt/x86_64-windows/d3d11.dll")" "Wine builtin DLLracerace"
-ok "it was built once" "$(grep -c 'building crossover-26.3+one ' "$work/log")" "1"
+ok "it was built once" "$(grep -c 'building crossover-26.3+one@' "$work/log")" "1"
 left=0
 for f in "$work/runners"/.*.new "$work/runners"/.*.old; do [ ! -e "$f" ] || left=$((left + 1)); done
 ok "no scratch is left behind" "$left" "0"
 
 echo "== a live runner is left alone"
 : > "$work/log"
-: > "$marker"
+live=$built
+touch -t 202001010000 "${live%/CrossOver}/.notproton-used"
 dll "$work/trees/one/x86_64-windows/d3d11.dll" threethreethree
 # np_variant_busy reads the executable path of every process, as RunnerInstaller.isRunning
 # does. Standing a fake ps in for one keeps the test off whether macOS will run a copied
@@ -301,16 +474,103 @@ dll "$work/trees/one/x86_64-windows/d3d11.dll" threethreethree
 mkdir -p "$work/fakebin"
 cat > "$work/fakebin/ps" <<FAKE
 #!/bin/sh
-printf '%s\n' /usr/libexec/somethingelse "$built/lib/wine/x86_64-unix/wine"
+printf '%s\n' /usr/libexec/somethingelse "$live/lib/wine/x86_64-unix/wine"
 FAKE
 chmod +x "$work/fakebin/ps"
-ok "the runner is still used" "$(PATH="$work/fakebin:$PATH" resolve 'one')" "$built"
-ok "and is not rebuilt under the running game" "$([ -f "$marker" ] && echo kept)" "kept"
+got=$(PATH="$work/fakebin:$PATH" resolve 'one')
+ok "the next launch gets a new build beside it" "$got" "$(newest one)"
+ok "holding the new tree" "$(tr -d '\000' < "$got/lib/dxmt/x86_64-windows/d3d11.dll")" "Wine builtin DLLthreethreethree"
+ok "and the running one is not touched" "$(tr -d '\000' < "$live/lib/dxmt/x86_64-windows/d3d11.dll")" "Wine builtin DLLracerace"
+ok "or cleaned up while it runs, however old" "$([ -d "$live" ] && echo kept)" "kept"
+: > "$work/log"
+cat > "$work/fakebin/ps" <<FAKE
+#!/bin/sh
+printf '%s\n' "$got/lib/wine/x86_64-unix/wine"
+FAKE
+marker="$got/lib/wine/not-from-the-tree"
+: > "$marker"
+ok "a forced rebuild of a running build is used as it is" "$(PATH="$work/fakebin:$PATH" resolve 'one' 1)" "$got"
+ok "and not rebuilt under the game" "$([ -f "$marker" ] && echo kept)" "kept"
 logged "and says why" "leaving it as it is"
+
+echo "== a build that fails runs the last one that worked"
+: > "$work/log"
+good=$(resolve 'one')
+native_dll "$work/trees/one/x86_64-windows/dxgi.dll"
+ok "the last good build is used" "$(resolve 'one')" "$good"
+logged "and says so" "the last build of it that worked"
+: > "$work/log"
+dll "$base/lib/wine/x86_64-windows/ntdll.dll" repatched
+ok "but not once the base runner is re-patched, since it carries the old bridge" "$(resolve 'one')" "$base"
+rm -f "$work/trees/one/x86_64-windows/dxgi.dll"
 
 # shellcheck disable=SC2009 # the point is the shape of what ps prints
 ok "ps really does print absolute executable paths" \
   "$(ps -axww -o comm= | sed -n 's|^\(/[^ ]*\)/[^/ ]*$|yes|p' | head -1)" "yes"
+
+echo "== mach-o files are signed"
+if command -v cc > /dev/null 2>&1; then
+  printf 'int main(void) { return 0; }\n' > "$work/m.c"
+  cc -o "$work/plain" "$work/m.c"
+  cp "$work/plain" "$work/broken"
+  codesign --remove-signature "$work/broken"
+  ok "the broken binary really is broken" "$(codesign -v "$work/broken" 2>/dev/null || echo invalid)" "invalid"
+  cp "$work/plain" "$base/bin/wineserver"
+  cat > "$work/ent.plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict><key>com.apple.security.cs.disable-library-validation</key><true/></dict></plist>
+PLIST
+  codesign -f -s - --options runtime --entitlements "$work/ent.plist" "$base/bin/wineserver" 2>/dev/null
+  mkdir -p "$work/trees/signed/bin" "$work/trees/signed/lib/wine/x86_64-unix"
+  cp "$work/broken" "$work/trees/signed/bin/wineserver"
+  cp "$work/broken" "$work/trees/signed/lib/wine/x86_64-unix/win32u.so"
+  desc signed <<CONF
+src   = trees/signed
+dst   = .
+build = 26.3
+CONF
+  : > "$work/log"
+  got=$(resolve 'signed')
+  ok "a tree with unsigned binaries is used" "$got" "$(newest signed)"
+  ok "a new file is signed so it loads" "$(codesign -v "$got/lib/wine/x86_64-unix/win32u.so" 2>/dev/null && echo valid)" "valid"
+  ok "a replaced one is signed" "$(codesign -v "$got/bin/wineserver" 2>/dev/null && echo valid)" "valid"
+  ok "with the entitlements of what it replaced" \
+    "$(codesign -d --entitlements - --xml "$got/bin/wineserver" 2>/dev/null | grep -c disable-library-validation)" "1"
+  ok "and the tree itself is not touched" "$(codesign -v "$work/trees/signed/bin/wineserver" 2>/dev/null || echo invalid)" "invalid"
+  cat > "$work/restricted.plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict><key>com.apple.developer.cross-architecture-support</key><true/></dict></plist>
+PLIST
+  codesign -f -s - --entitlements "$work/restricted.plist" "$base/bin/wineserver" 2>/dev/null
+  rm -rf "$work/runners/crossover-26.3+signed"@*
+  : > "$work/log"
+  ok "replacing a file with an Apple-only entitlement falls back" "$(resolve 'signed')" "$base"
+  logged "and says why" "would replace a file holding an entitlement only Apple can sign for"
+else
+  echo "  skip  no cc to make a Mach-O with"
+fi
+
+echo "== a prefix rereads wine.inf when its variant files change"
+pfx="$work/compat/pfx"
+mkdir -p "$pfx"
+: > "$pfx/system.reg"
+switch() {
+  printf '1234\n' > "$pfx/.update-timestamp"
+  STEAM_COMPAT_DATA_PATH="$work/compat" WINEPREFIX="$pfx" np_variant_layout="$1" log="$work/log" \
+    sh -c "$switch_fn
+note_variant_switch"
+  cat "$pfx/.update-timestamp"
+}
+ok "a prefix that never ran a variant is left alone" "$(switch '')" "1234"
+ok "the first variant has it update" "$(switch aaa)" "0"
+ok "the same files again do not" "$(switch aaa)" "1234"
+ok "a different set does" "$(switch bbb)" "0"
+ok "and so does going back to the stock runner" "$(switch '')" "0"
+ok "which then stays put" "$(switch '')" "1234"
+rm -f "$pfx/system.reg"
+ok "a prefix not made yet is not touched" "$(switch ccc)" "1234"
 
 [ "$fail" -eq 0 ] || exit 1
 echo "==> runnervariantcheck: variants build on demand, refuse bad trees and fall back"

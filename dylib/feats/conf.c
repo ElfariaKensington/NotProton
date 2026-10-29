@@ -27,7 +27,7 @@ static const np_conf_spec_t kPlugin[] = {
 // its group says its name once.
 static const np_conf_spec_t kVariant[] = {
     { "label", 1, 0 }, { "variant", 1, 0 }, { "src", 1, 1 }, { "dst", 1, 1 },
-    { NULL, 0, 0 }
+    { "build", 8, 0 }, { "remove", 32, 0 }, { NULL, 0, 0 }
 };
 
 static int conf_space(char c) { return c == ' ' || (c >= '\t' && c <= '\r'); }
@@ -146,6 +146,23 @@ static int conf_env_ok(const char *v) {
     return 1;
 }
 
+// dst may be the CrossOver folder itself, a remove has to name something under it.
+static int conf_rel_ok(const char *v, int may_be_top) {
+    int named = 0;
+    if (v[0] == '/' || strstr(v, "..")) return 0;
+    for (const char *p = v; *p; p++)
+        if (*p != '/' && *p != '.') named = 1;
+    return may_be_top || named;
+}
+
+// The charset compat_run.sh allows in np_build, so a build that can never match is refused.
+static int conf_build_ok(const char *v) {
+    for (const char *p = v; *p; p++)
+        if (!((*p >= 'A' && *p <= 'Z') || (*p >= 'a' && *p <= 'z') ||
+              (*p >= '0' && *p <= '9') || *p == '.' || *p == '-')) return 0;
+    return 1;
+}
+
 // What a record needs beyond the grammar: the fields the tables mark required, and the
 // rules a value has to keep. Returns a code, with *detail set when it names a field.
 static const char *conf_schema(const np_conf_rec_t *rec, np_conf_kind kind,
@@ -162,9 +179,19 @@ static const char *conf_schema(const np_conf_rec_t *rec, np_conf_kind kind,
 
     if (kind == NP_CONF_VARIANT) {
         const char *dst = np_conf_get(rec, "dst");
-        if (dst[0] == '/' || strstr(dst, "..")) {
+        if (!conf_rel_ok(dst, 1)) {
             *detail = "dst";
             return NP_CONF_BAD_VALUE;
+        }
+        while (np_conf_next(rec, &it, &n, &v)) {
+            if (strcmp(n, "remove") == 0 && !conf_rel_ok(v, 0)) {
+                *detail = "remove";
+                return NP_CONF_BAD_VALUE;
+            }
+            if (strcmp(n, "build") == 0 && !conf_build_ok(v)) {
+                *detail = "build";
+                return NP_CONF_BAD_VALUE;
+            }
         }
         return NULL;
     }

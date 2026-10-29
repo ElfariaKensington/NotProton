@@ -214,13 +214,19 @@ NP_CONF_NAMES
     eq = index(s, "=")
     return eq > 1 && substr(s, 1, eq - 1) ~ /^[A-Z_][A-Z0-9_]*$/
   }
+  function relok(s, top) {
+    if (substr(s, 1, 1) == "/" || index(s, "..")) return 0
+    return top || s ~ /[^.\/]/
+  }
   function refuse(scope, c, d) { printf "!\t%s\t%s%s%s\n", scope, c, (d == "" ? "" : ":"), d }
   function schema(   i, f, t, values, mn, mx, st, df) {
     for (i = 1; i <= nreq; i++)
       if (!(req[i] in cnt)) { detail = req[i]; return "missing-required" }
     if (kind == "variant") {
-      if (substr(first["dst"], 1, 1) == "/" || index(first["dst"], "..")) {
-        detail = "dst"; return "bad-value"
+      if (!relok(first["dst"], 1)) { detail = "dst"; return "bad-value" }
+      for (i = 1; i <= nkv; i++) {
+        if (names[i] == "remove" && !relok(vals[i], 0)) { detail = "remove"; return "bad-value" }
+        if (names[i] == "build" && vals[i] !~ /^[A-Za-z0-9.-]+$/) { detail = "build"; return "bad-value" }
       }
       return ""
     }
@@ -286,8 +292,8 @@ NP_CONF_NAMES
       split("1 1 16 1 1 1 1 4 1 16 1 1 1 16 1 1 1 1 1", m, " ")
       split("label", req, " "); nreq = 1
     } else {
-      split("label variant src dst", f, " ")
-      split("1 1 1 1", m, " ")
+      split("label variant src dst build remove", f, " ")
+      split("1 1 1 1 8 32", m, " ")
       split("src dst", req, " "); nreq = 2
     }
     for (i in f) most[f[i]] = m[i] + 0
@@ -386,6 +392,32 @@ np_variant_arch() {
   esac
 }
 
+# ./lib/ and lib are the same place, as var_norm in webpatch.c reads them.
+np_variant_norm() {
+  printf '%s\n' "$1" | awk -F/ '{
+    o = ""
+    for (i = 1; i <= NF; i++) if ($i != "" && $i != ".") o = (o == "" ? $i : o "/" $i)
+    printf "%s", o
+  }'
+}
+
+# Layers CrossOver ships beside Wine. Anything else is Wine itself and only fits the build it was compiled against.
+np_variant_standalone() {
+  case "$1" in
+    (lib/dxmt | lib/dxmt/* | lib/dxvk | lib/dxvk/*) return 0 ;;
+    (lib/apple_gptk | lib/apple_gptk/* | lib/apple_gptk[0-9] | lib/apple_gptk[0-9]/*) return 0 ;;
+    (lib64/apple_gptk | lib64/apple_gptk/* | lib64/apple_gptk[0-9] | lib64/apple_gptk[0-9]/*) return 0 ;;
+  esac
+  return 1
+}
+
+# np_v_core_at keeps the first landing that is Wine itself rather than a standalone layer.
+np_variant_landing() {
+  [ -z "$np_v_core_at" ] || return 0
+  np_v_l=$(np_variant_norm "$1")
+  np_variant_standalone "$np_v_l" || np_v_core_at=${np_v_l:-.}
+}
+
 # Whether a tree has anything this runner can use, read from the top of the tree the way
 # var_fits in webpatch.c reads it: files there land in dst, and each folder lands where dst
 # has one of the same name. A folder named for an architecture only counts for the runner
@@ -395,11 +427,17 @@ np_variant_fits() {
   np_v_lands=0
   np_v_named=0
   np_v_fits=0
+  np_v_core_at=""
   np_v_want_arch=$(np_variant_arch)
   np_v_into="$np_support/runners/crossover-$np_build/CrossOver/$2"
   for np_v_e in "$1"/*; do
+    # The overlay copies regular files only, so a link never lands.
+    [ ! -L "$np_v_e" ] || continue
     if [ -f "$np_v_e" ]; then
-      [ ! -d "$np_v_into" ] || np_v_lands=1
+      if [ -d "$np_v_into" ]; then
+        np_v_lands=1
+        np_variant_landing "$2"
+      fi
       continue
     fi
     [ -d "$np_v_e" ] || continue
@@ -408,6 +446,7 @@ np_variant_fits() {
     if [ -d "$np_v_into/${np_v_e##*/}" ]; then
       np_v_here=1
       np_v_lands=1
+      np_variant_landing "$2/${np_v_e##*/}"
     fi
     np_v_d_arch=$(np_variant_dir_arch "${np_v_e##*/}")
     [ -n "$np_v_d_arch" ] || continue
@@ -416,6 +455,16 @@ np_variant_fits() {
       np_v_fits=1
     fi
   done
+  # A remove lands when the runner has what it names.
+  while IFS= read -r np_v_r; do
+    [ -n "$np_v_r" ] || continue
+    if [ -e "$np_v_into/$np_v_r" ] || [ -L "$np_v_into/$np_v_r" ]; then
+      np_v_lands=1
+      np_variant_landing "$2/$np_v_r"
+    fi
+  done <<NP_V_REMOVES
+$np_v_removes
+NP_V_REMOVES
   [ "$np_v_lands" = 1 ] && { [ "$np_v_named" = 0 ] || [ "$np_v_fits" = 1 ]; }
 }
 
@@ -428,6 +477,40 @@ np_variant_dir_arch() {
     (i386|i386-*)       printf 'i386' ;;
     (arm64ec|arm64ec-*) printf 'arm64ec' ;;
   esac
+}
+
+# ntdll.dll carries the Steam bridge patch and ntdll.so has to match it, so variants keep off both and off lsteamclient.
+np_variant_bridge_hit() {
+  # APFS ignores case, so NTDLL.DLL is ntdll.dll.
+  np_v_nd=$(np_variant_norm "$2" | tr '[:upper:]' '[:lower:]')
+  np_v_nr=""
+  while IFS= read -r np_v_x; do
+    [ -n "$np_v_x" ] || continue
+    np_v_nr="$np_v_nr$(np_variant_norm "$np_v_nd/$np_v_x" | tr '[:upper:]' '[:lower:]')
+"
+  done <<NP_V_REMOVES
+$3
+NP_V_REMOVES
+  for np_v_slot in x86_64 i386 aarch64 arm64ec; do
+    for np_v_p in "lib/wine/$np_v_slot-windows/ntdll.dll" "lib/wine/$np_v_slot-windows/lsteamclient.dll" \
+                  "lib/wine/$np_v_slot-unix/ntdll.so" "lib/wine/$np_v_slot-unix/lsteamclient.so"; do
+      case "
+$np_v_nr" in
+        (*"
+$np_v_p
+"*) printf '%s' "$np_v_p"; return 0 ;;
+      esac
+      case "$np_v_p" in
+        ("$np_v_nd"/*) np_v_r=${np_v_p#"$np_v_nd"/} ;;
+        (*) [ -z "$np_v_nd" ] || continue; np_v_r=$np_v_p ;;
+      esac
+      if [ -f "$1/$np_v_r" ] && [ ! -L "$1/$np_v_r" ]; then
+        printf '%s' "$np_v_p"
+        return 0
+      fi
+    done
+  done
+  return 1
 }
 
 # Requested names, split on +, sorted so a combination is named and overlaid the same way
@@ -451,8 +534,14 @@ np_variant_dir_name() {
 np_variant_read() {
   np_v_src=$(np_conf_value "$np_conf_var_table" "$1" src)
   np_v_dst=$(np_conf_value "$np_conf_var_table" "$1" dst)
+  np_v_removes=$(np_conf_values "$np_conf_var_table" "$1" remove)
+  np_v_builds=$(np_conf_values "$np_conf_var_table" "$1" build)
   if [ -z "$np_v_src" ] || [ -z "$np_v_dst" ]; then
     np_variant_say "$1 has no usable descriptor"
+    return 1
+  fi
+  if [ -n "$np_v_builds" ] && ! printf '%s\n' "$np_v_builds" | grep -qxF "$np_build"; then
+    np_variant_say "$1 is for $(printf '%s' "$np_v_builds" | tr '\n' ' ') and this runner is $np_build, so it is left out"
     return 1
   fi
   np_v_src=$(np_home_path "$np_v_src")
@@ -462,6 +551,14 @@ np_variant_read() {
   fi
   if ! np_variant_fits "$np_v_src" "$np_v_dst"; then
     np_variant_say "$1 has nothing for $np_v_want_arch that lands in this runner, so it is refused"
+    return 1
+  fi
+  if np_v_hit=$(np_variant_bridge_hit "$np_v_src" "$np_v_dst" "$np_v_removes"); then
+    np_variant_say "$1 would change $np_v_hit, which carries NotProton's Steam bridge, so it is refused"
+    return 1
+  fi
+  if [ -n "$np_v_core_at" ] && [ -z "$np_v_builds" ]; then
+    np_variant_say "$1 changes $np_v_core_at, which is Wine itself rather than a layer beside it, so it has to name the build it was made for: build = $np_build"
     return 1
   fi
   return 0
@@ -475,6 +572,7 @@ np_variant_manifest() {
     np_variant_read "$np_v_name" || return 1
     printf '%s %s\n' "$np_v_name" "$np_v_dst"
     ( cd "$np_v_src" && find . -name '.?*' -prune -o -type f -exec stat -f '%N %z %m' {} + ) | LC_ALL=C sort
+    printf '%s\n' "$np_v_removes" | awk 'NF { print "remove " $0 }'
   done
   np_v_mbase="$np_support/runners/crossover-$np_build/CrossOver"
   for np_v_bf in "$np_v_mbase/share/wine/wine.inf" \
@@ -485,6 +583,11 @@ np_variant_manifest() {
     stat -f 'base %N %d %i %z %m' "$np_v_bf" 2>/dev/null || true
   done
   return 0
+}
+
+# Sizes and times are left out, so rebuilding the same files doesn't rerun wine.inf in every prefix.
+np_variant_layout_of() {
+  awk '$1 == "base" { next } /^\.\// { sub(/ [0-9]+ [0-9]+$/, "") } { print }' | /sbin/md5 -q
 }
 
 # Wine keeps a wineserver running inside the runner, so a process running from there is a
@@ -500,33 +603,112 @@ np_variant_builtin() {
   [ "$(dd if="$1" bs=1 skip=64 count=16 2>/dev/null)" = "Wine builtin DLL" ]
 }
 
+np_variant_macho() {
+  case "$(od -An -tx1 -N4 "$1" 2>/dev/null | tr -d ' \n')" in
+    (cffaedfe | cefaedfe | feedfacf | feedface | cafebabe | bebafeca) return 0 ;;
+  esac
+  return 1
+}
+
+# arm64 won't load an edited Mach-O, and a replaced loader or wineserver needs the old file's entitlements back.
+np_variant_sign() {
+  if [ -n "$2" ]; then
+    printf '%s' "$2" > "$np_v_root/.np-entitlements.plist" || return 1
+    /usr/bin/codesign -f -s - --options runtime \
+      --entitlements "$np_v_root/.np-entitlements.plist" "$1" >> "${log:-/dev/null}" 2>&1 || return 1
+    rm -f "$np_v_root/.np-entitlements.plist"
+    return 0
+  fi
+  /usr/bin/codesign -v "$1" 2>/dev/null && return 0
+  /usr/bin/codesign -f -s - "$1" >> "${log:-/dev/null}" 2>&1
+}
+
 # A tree can hold more architectures than a runner has slots for -- DXMT builds one arch
 # per build directory but installs them into one prefix, so a shared tree may carry both.
 # A directory the runner does not have is skipped rather than fatal, and a variant that
 # lands nothing is refused, which is what catches a tree meant for the other machine.
 np_variant_overlay() {
   np_v_root="$1"
+  : > "$np_v_root/.np-laid" || return 1
   for np_v_name in $2; do
     np_variant_read "$np_v_name" || return 1
+    np_v_nd=$(np_variant_norm "$np_v_dst")
     ( cd "$np_v_src" && find . -name '.?*' -prune -o -type f -print ) > "$np_v_root/.np-files" || return 1
-    np_v_laid=0
+
+    # Two variants touching one file is allowed (the later wins) but rarely meant.
+    {
+      awk -v d="$np_v_nd" '{ sub(/^\.\//, ""); print (d == "" ? $0 : d "/" $0) }' "$np_v_root/.np-files"
+      while IFS= read -r np_v_x; do
+        [ -z "$np_v_x" ] || { np_variant_norm "$np_v_nd/$np_v_x"; echo; }
+      done <<NP_V_REMOVES
+$np_v_removes
+NP_V_REMOVES
+    } > "$np_v_root/.np-mine"
+    np_v_clash=$(awk 'FILENAME == ARGV[1] { a[$0]; next } ($0 in a)' \
+      "$np_v_root/.np-laid" "$np_v_root/.np-mine" | head -3 | tr '\n' ' ')
+    [ -z "$np_v_clash" ] ||
+      np_variant_say "$np_v_name changes ${np_v_clash% } after an earlier variant did, and $np_v_name's copy is the one that runs"
+    cat "$np_v_root/.np-mine" >> "$np_v_root/.np-laid"
+
+    while IFS= read -r np_v_x; do
+      [ -n "$np_v_x" ] || continue
+      np_v_at="$np_v_root/CrossOver/$np_v_dst/$np_v_x"
+      if [ -L "$np_v_at" ] || [ -f "$np_v_at" ]; then
+        rm -f "$np_v_at" || return 1
+      elif [ -e "$np_v_at" ]; then
+        np_variant_say "$np_v_name: $np_v_x is a folder, and only files are removed, so it stays"
+      else
+        np_variant_say "$np_v_name: $np_v_x is not in this runner, so there is nothing to remove"
+      fi
+    done <<NP_V_REMOVES
+$np_v_removes
+NP_V_REMOVES
+
+    # Forks are what a Wine-sized tree costs, so the unlinks and quarantine strips go in batches.
+    : > "$np_v_root/.np-at"
+    : > "$np_v_root/.np-take"
     np_v_skipped=""
     while IFS= read -r np_v_rel; do
       np_v_rel=${np_v_rel#./}
       np_v_at="$np_v_root/CrossOver/$np_v_dst/$np_v_rel"
-      np_v_dir=$(dirname "$np_v_rel")
-      if [ ! -d "$(dirname "$np_v_at")" ]; then
+      if [ ! -d "${np_v_at%/*}" ]; then
+        case "$np_v_rel" in */*) np_v_dir=${np_v_rel%/*} ;; *) np_v_dir=. ;; esac
         case " $np_v_skipped " in
           *" $np_v_dir "*) ;;
           *) np_v_skipped="$np_v_skipped $np_v_dir" ;;
         esac
         continue
       fi
-      rm -f "$np_v_at"
+      printf '%s\n' "$np_v_rel" >> "$np_v_root/.np-take"
+      printf '%s\0' "$np_v_at" >> "$np_v_root/.np-at"
+    done < "$np_v_root/.np-files"
+    xargs -0 rm -f < "$np_v_root/.np-at" || return 1
+
+    np_v_laid=0
+    while IFS= read -r np_v_rel; do
+      np_v_at="$np_v_root/CrossOver/$np_v_dst/$np_v_rel"
+      # PE files are never Mach-O, so only the other names get opened to check.
+      np_v_ent=""
+      np_v_signable=0
+      case "${np_v_rel##*/}" in
+        (*.so | *.dylib | *.bundle) np_v_signable=1 ;;
+        (*.*) ;;
+        (*) np_v_signable=1 ;;
+      esac
+      np_v_was="$np_support/runners/crossover-$np_build/CrossOver/$np_v_dst/$np_v_rel"
+      if [ "$np_v_signable" = 1 ] && [ -f "$np_v_was" ] && np_variant_macho "$np_v_was"; then
+        np_v_ent=$(/usr/bin/codesign -d --entitlements - --xml "$np_v_was" 2>/dev/null) || np_v_ent=""
+        case "$np_v_ent" in
+          # Ad-hoc signing can't carry Apple-granted entitlements like the FEX loader's cross-architecture-support.
+          (*'<key>com.apple.developer.'*)
+            np_variant_say "$np_v_name/$np_v_rel would replace a file holding an entitlement only Apple can sign for, so $np_v_name is refused"
+            return 1 ;;
+          (*'<key>'*) ;;
+          (*) np_v_ent="" ;;
+        esac
+      fi
       cp -c "$np_v_src/$np_v_rel" "$np_v_at" 2>/dev/null \
         || cp "$np_v_src/$np_v_rel" "$np_v_at" || return 1
-      # A downloaded tree arrives quarantined and Gatekeeper can refuse to dlopen it.
-      xattr -d com.apple.quarantine "$np_v_at" 2>/dev/null || true
       case "$np_v_rel" in
         *.dll)
           if ! np_variant_builtin "$np_v_at"; then
@@ -534,16 +716,24 @@ np_variant_overlay() {
             return 1
           fi ;;
       esac
+      if [ "$np_v_signable" = 1 ] && np_variant_macho "$np_v_at" \
+         && ! np_variant_sign "$np_v_at" "$np_v_ent"; then
+        np_variant_say "$np_v_name/$np_v_rel could not be signed and macOS would not load it, so $np_v_name is refused"
+        return 1
+      fi
       np_v_laid=$(( np_v_laid + 1 ))
-    done < "$np_v_root/.np-files"
-    rm -f "$np_v_root/.np-files"
+    done < "$np_v_root/.np-take"
+    # A downloaded tree arrives quarantined and Gatekeeper can refuse to dlopen it.
+    xargs -0 xattr -d com.apple.quarantine < "$np_v_root/.np-at" 2>/dev/null || true
+    rm -f "$np_v_root/.np-files" "$np_v_root/.np-mine" "$np_v_root/.np-take" "$np_v_root/.np-at"
     [ -z "$np_v_skipped" ] ||
       np_variant_say "$np_v_name:$np_v_skipped has no counterpart in this runner, skipped"
-    if [ "$np_v_laid" -eq 0 ]; then
+    if [ "$np_v_laid" -eq 0 ] && [ -z "$np_v_removes" ]; then
       np_variant_say "nothing in $np_v_name belongs in this runner, so it is refused"
       return 1
     fi
   done
+  rm -f "$np_v_root/.np-laid"
   return 0
 }
 
@@ -555,9 +745,11 @@ np_variant_build() (
   np_v_target="$1"
   np_v_names="$2"
   np_v_want="$3"
+  np_v_stem="$4"
   np_v_base="$np_support/runners/crossover-$np_build"
   # Hidden, as the app's own scratch is, so nothing that lists runners takes these for one.
   np_v_scratch="${np_v_target%/*}/.${np_v_target##*/}"
+  np_v_lock="${np_v_stem%/*}/.${np_v_stem##*/}.lock"
   np_v_new="$np_v_scratch.new"
   np_v_old="$np_v_scratch.old"
 
@@ -565,10 +757,10 @@ np_variant_build() (
     np_variant_say "no base runner at $np_v_base yet, so nothing can be built from it"
     exit 1
   fi
-  [ ! -L "$np_v_scratch.lock" ] || exit 1
-  exec 7>> "$np_v_scratch.lock" || exit 1
+  [ ! -L "$np_v_lock" ] || exit 1
+  exec 7>> "$np_v_lock" || exit 1
   if ! /usr/bin/lockf -s -t 120 7; then
-    np_variant_say "another launch is still building ${np_v_target##*/}"
+    np_variant_say "another launch is still building ${np_v_stem##*/}"
     exit 1
   fi
   trap 'rm -rf "$np_v_new"; exit 143' TERM
@@ -591,7 +783,8 @@ np_variant_build() (
   np_variant_say "building ${np_v_target##*/} from $np_v_names"
   if ! { cp -c -R "$np_v_base" "$np_v_new" 2>/dev/null || cp -R "$np_v_base" "$np_v_new"; } \
      || ! np_variant_overlay "$np_v_new" "$np_v_names" \
-     || ! printf '%s\n' "$np_v_want" > "$np_v_new/CrossOver/.notproton-variant"; then
+     || ! printf '%s\n' "$np_v_want" > "$np_v_new/CrossOver/.notproton-variant" \
+     || ! : > "$np_v_new/.notproton-used"; then
     rm -rf "$np_v_new"
     np_variant_say "could not build ${np_v_target##*/}"
     exit 1
@@ -610,6 +803,30 @@ np_variant_build() (
   rm -rf "$np_v_old"
   np_variant_say "built ${np_v_target##*/}"
 )
+
+# Newest build that worked, skipping any made before a re-patch since those carry the old Steam bridge.
+np_variant_last_good() {
+  np_v_base_now=$(printf '%s\n' "$2" | grep '^base ' || true)
+  # shellcheck disable=SC2012 # the names are ours, and ls is what sorts by time
+  ls -dt "$1"@*/.notproton-used 2>/dev/null | while IFS= read -r np_v_lg; do
+    np_v_lg=${np_v_lg%/.notproton-used}
+    [ -d "$np_v_lg/CrossOver/lib/wine" ] || continue
+    [ "$(grep '^base ' "$np_v_lg/CrossOver/.notproton-variant" 2>/dev/null || true)" = "$np_v_base_now" ] || continue
+    : > "$np_v_lg/.notproton-used" 2>/dev/null || continue
+    printf '%s' "$np_v_lg"
+    break
+  done
+}
+
+# Ten minutes covers a launch that resolved an old build but hasn't started Wine from it yet.
+np_variant_gc() {
+  for np_v_old in "$1"@*; do
+    [ -d "$np_v_old" ] && [ "$np_v_old" != "$2" ] || continue
+    [ -z "$(find "$np_v_old/.notproton-used" -mmin -10 2>/dev/null)" ] || continue
+    np_variant_busy "$np_v_old" && continue
+    rm -rf "$np_v_old" && np_variant_say "removed ${np_v_old##*/}, which nothing uses any more"
+  done
+}
 
 # One name in a request that has lost its descriptor must not take the rest with it: the
 # panel keeps a launch option a game already carries, and a game outlives a descriptor.
@@ -637,42 +854,42 @@ np_variant_resolve() {
 
   np_v_sel=${np_v_keep% }
   np_variant_used="$np_v_sel"
-  np_variant_root="$np_support/runners/$(np_variant_dir_name "$np_v_sel")"
-  np_v_have="$np_variant_root/CrossOver/lib/wine"
   np_v_want=$(np_variant_manifest "$np_v_sel") || np_v_want=""
   [ -n "$np_v_want" ] || return 1
+  np_v_stem="$np_support/runners/$(np_variant_dir_name "$np_v_sel")"
+  np_variant_key=${np_v_stem##*/crossover-"$np_build"}
+  # Named for its contents, so a rebuild never moves a runner out from under a running game.
+  np_variant_root="$np_v_stem@$(printf '%s\n' "$np_v_want" | /sbin/md5 -q | cut -c1-12)"
+  np_variant_layout=$(printf '%s\n' "$np_v_want" | np_variant_layout_of)
 
-  np_v_at="$np_variant_root/CrossOver/.notproton-variant"
-  if [ -d "$np_v_have" ] && [ "${NOTPROTON_VARIANT_REBUILD:-}" != 1 ] \
-     && [ "$(cat "$np_v_at" 2>/dev/null || true)" = "$np_v_want" ]; then
-    np_variant_root="$np_variant_root/CrossOver"
-    return 0
-  fi
-
-  if np_variant_busy "$np_variant_root"; then
-    if [ -d "$np_v_have" ]; then
-      np_variant_say "a game is running from $(np_variant_dir_name "$np_v_sel"), leaving it as it is"
-      np_variant_root="$np_variant_root/CrossOver"
-      return 0
+  if [ ! -d "$np_variant_root/CrossOver/lib/wine" ] || [ "${NOTPROTON_VARIANT_REBUILD:-}" = 1 ] \
+     || [ "$(cat "$np_variant_root/CrossOver/.notproton-variant" 2>/dev/null || true)" != "$np_v_want" ]; then
+    if ! np_variant_build "$np_variant_root" "$np_v_sel" "$np_v_want" "$np_v_stem" \
+       && [ ! -d "$np_variant_root/CrossOver/lib/wine" ]; then
+      np_variant_root=$(np_variant_last_good "$np_v_stem" "$np_v_want")
+      [ -n "$np_variant_root" ] || return 1
+      np_variant_say "running ${np_variant_root##*/}, the last build of it that worked"
+      np_variant_layout=$(np_variant_layout_of < "$np_variant_root/CrossOver/.notproton-variant")
     fi
-    return 1
   fi
-
-  if np_variant_build "$np_variant_root" "$np_v_sel" "$np_v_want" || [ -d "$np_v_have" ]; then
-    np_variant_root="$np_variant_root/CrossOver"
-    return 0
-  fi
-  return 1
+  : > "$np_variant_root/.notproton-used" 2>/dev/null || true
+  np_variant_gc "$np_v_stem" "$np_variant_root"
+  np_variant_root="$np_variant_root/CrossOver"
+  return 0
 }
 
 CX_ROOT="$np_support/runners/crossover-$np_build/CrossOver"
 np_variant=${NOTPROTON_RUNNER_VARIANT:-}
+np_variant_key=""
+np_variant_layout=""
 case "$np_variant" in *[!A-Za-z0-9._+-]*) np_variant="" ;; esac
 if [ -n "$np_variant" ]; then
   if np_variant_resolve "$np_variant"; then
     CX_ROOT="$np_variant_root"
   else
     np_variant=""
+    np_variant_key=""
+    np_variant_layout=""
   fi
 fi
 export CX_ROOT
@@ -1133,6 +1350,21 @@ offer_switch_rebuild() {
 
 Rebuild your prefix for $(running_name "$np_display" "$(tool_name "$now_arch")")? Your save games will be preserved and not lost." \
     "Launch Without Rebuilding"
+}
+
+# Wine reruns wine.inf only when its mtime changes, which swapping a variant's files doesn't do.
+note_variant_switch() {
+  record="$STEAM_COMPAT_DATA_PATH/notproton-variant"
+  had=$(cat "$record" 2>/dev/null || true)
+  if [ "$had" != "$np_variant_layout" ] && [ -f "$WINEPREFIX/system.reg" ]; then
+    printf '0\n' > "$WINEPREFIX/.update-timestamp" 2>/dev/null || true
+    echo "=== runner variant files changed (${had:-none} to ${np_variant_layout:-none}), wine.inf reruns ===" >> "$log" 2>&1 || true
+  fi
+  if [ -n "$np_variant_layout" ]; then
+    printf '%s\n' "$np_variant_layout" > "$record" 2>/dev/null || true
+  else
+    rm -f "$record"
+  fi
 }
 
 claim_prefix() {
@@ -1767,7 +1999,8 @@ seed_prefix_from_template() {
     echo "=== prefix templates are busy, wine builds this prefix itself ===" >> "$log" 2>&1 || true
     return 0
   fi
-  template_dir="$template_cache/$runner_id"
+  # Variants get their own template slot or they'd keep evicting the stock runner's.
+  template_dir="$template_cache/$runner_id$np_variant_key"
   if [ -L "$template_cache" ] || [ -L "$template_dir" ] \
     || ! mkdir -p "$template_dir"; then exec 9>&-; return 0; fi
   if ! identity=$(template_identity); then exec 9>&-; return 0; fi
@@ -1956,6 +2189,7 @@ if [ -n "$STEAM_COMPAT_DATA_PATH" ]; then
   stage_step="prefix arch check"
   refuse_foreign_prefix
   claim_prefix
+  note_variant_switch
   stage_step="prefix switch check"
   offer_switch_rebuild
   echo "sync: WINEMSYNC=$WINEMSYNC from $msync_from" >> "$log" 2>&1 || true

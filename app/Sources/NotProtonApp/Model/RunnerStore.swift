@@ -39,8 +39,8 @@ enum RunnerStore {
         return .unpatched(builds: unpatched, problems: problems)
     }
 
-    // compat_run.sh assembles variant runners as crossover-<build>+<names>, with its scratch
-    // and lock beside them as hidden .crossover-<build>+<names>.*, and no build id holds a "+".
+    // compat_run.sh assembles variant runners as crossover-<build>+<names>@<hash>, with its scratch
+    // and lock beside them as hidden .crossover-<build>+<names>*, and no build id holds a "+".
     static func variantEntries(ofBuild build: String, in runners: URL) -> [URL] {
         let entries = (try? FileManager.default.contentsOfDirectory(
             at: runners, includingPropertiesForKeys: nil)) ?? []

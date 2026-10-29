@@ -94,13 +94,23 @@ can all live in one file.
 | `variant` | the group it belongs to, which is the dropdown's label. The id when left out, so a variant on its own needs neither. |
 | `src` | the folder laid over the runner, absolute or relative to `$HOME`. |
 | `dst` | where in the runner it goes, relative to the CrossOver folder. |
+| `build` | repeatable, up to 8. A CrossOver build the variant was made for, as its runner folder names it, such as `27.0.0.41073` or `27.0.0.41073-fex`. Required for anything that lands outside DXMT, DXVK and D3DMetal. |
+| `remove` | repeatable, up to 32. A file to delete from the variant's runner, relative to `dst`. |
 
 `src` and `dst` are required; `label` and `variant` fall back to the id, so the smallest
-variant is a header and those two lines. Any field that is not one of these four is
+variant is a header and those two lines. Any field that is not one of these is
 refused rather than ignored, since a typo that looked like it worked would leave you
 testing the stock runner.
+
+A variant landing only in `lib/dxmt`, `lib/dxvk` or `lib/apple_gptk*` works on any build
+that has those folders. One that changes Wine itself, in `lib/wine`, `bin` or anywhere else,
+has to name the builds it was compiled against with `build`, and is left out everywhere
+else. Nothing may replace or remove `ntdll` or `lsteamclient`, which carry the Steam
+bridge. Mach-O files are re-signed as they are laid down, keeping the entitlements of the
+file they replace.
 
 The chosen variant is written to the game's launch options as
 `NOTPROTON_RUNNER_VARIANT`, and variants from different groups combine as `a+b`. The
 runner is assembled the first time a game asks for it and reused after that, so the
-first launch pays for the copy and later ones do not.
+first launch pays for the copy and later ones do not. A prefix that last ran with a
+different set of variant files reruns `wine.inf` on its next start.

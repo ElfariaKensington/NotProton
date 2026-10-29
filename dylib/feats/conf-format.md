@@ -106,18 +106,49 @@ and the rows that depend on it are hidden.
 | `variant` | once | | the group it belongs to, which is the dropdown's label; the id when it is left out, so a variant on its own needs no group |
 | `src` | once | yes | the folder laid over the runner, absolute or relative to `$HOME` |
 | `dst` | once | yes | where it goes, relative to the CrossOver folder; relative, and no `..` |
+| `build` | append, max 8 | | a CrossOver build this variant was made for, as the runner folder names it (`27.0.0.41073`, `27.0.0.41073-fex`). With any, the variant is only offered and applied on those builds |
+| `remove` | append, max 32 | | a file to delete from the variant's runner, relative to `dst`; relative, no `..`, and naming something below `dst` |
 
 Picking variants writes their ids to `NOTPROTON_RUNNER_VARIANT`, joined with `+`, and the
-launch assembles them over a clone of the base runner as `runners/crossover-<build>+<ids>`.
-No build id and no variant id can hold a `+`, so no two requests, and no base runner,
-share a folder.
+launch assembles them over a clone of the base runner as
+`runners/crossover-<build>+<ids>@<hash>`, the hash taken from everything that went into it.
+No build id and no variant id can hold a `+` or an `@`, so no two requests, and no base
+runner, share a folder. A rebuild lands beside the last one rather than over it, so a game
+still running from the old one keeps it. Builds nothing has used for ten minutes and nothing
+is running from are removed, and a build that fails leaves the game on the last one that
+worked.
+
+A file two variants in one request both lay down or remove is logged, and the one later in
+`+` order wins. Removes apply before a variant's own files, and only to files, never folders.
 
 Whether a variant fits a runner is decided from the top of `src`, the same way by the panel
 and by the launch: files there land in `dst`, and each folder lands where `dst` has one of
 the same name. A folder named for an architecture (`x86_64`, `aarch64`, `i386`, `arm64ec`,
 alone or followed by `-`) only counts for the runner that runs it. A variant fits when
 something lands and, if any folder names an architecture, one for the runner's own lands
-too. Dot files are ignored throughout.
+too. A `remove` lands when the runner has what it names. Dot files are ignored throughout.
+
+Where something lands decides how much it is trusted. `lib/dxmt`, `lib/dxvk`,
+`lib/apple_gptk`, `lib/apple_gptk<N>` and the same under `lib64` are layers CrossOver keeps
+beside Wine, and a variant that only lands in those needs no `build`. Anything else,
+`lib/wine`, `bin`, `share` or a `dst` of `.` with a `lib` folder, is Wine itself, compiled
+against one build's headers and wineserver protocol, so a variant landing there without a
+`build` is offered nowhere and refused at launch.
+
+The Steam bridge is never a variant's: a variant that would lay down or remove
+`lib/wine/<arch>-windows/ntdll.dll`, `lsteamclient.dll`, `<arch>-unix/ntdll.so` or
+`lsteamclient.so` is refused. NotProton patches each build's `ntdll.dll` to load
+lsteamclient, and an `ntdll.so` has to come from the same build as the `ntdll.dll` beside it.
+
+A Mach-O a variant lays down is signed ad-hoc if its own signature does not hold, and one
+that replaces a runner file is signed with that file's entitlements. A file carrying an
+entitlement only Apple can grant, such as the FEX loader's
+`com.apple.developer.cross-architecture-support`, cannot be re-signed, so a variant
+replacing one is refused.
+
+A prefix remembers which variant files it last ran with. When a launch brings a different
+set, Wine is made to rerun `wine.inf` on that prefix, and a rebuild of the same files does
+not. Each variant combination gets its own prefix template.
 
 ## The normalised form
 

@@ -481,6 +481,62 @@ int main(void) {
         ok(strstr(j, "absolute") == NULL, "an absolute dst is refused");
     }
 
+    puts("== wine itself has to name its build");
+    clear_vars();
+    make_dir("mkdir -p '%s/Library/Application Support/notproton/runners/"
+             "crossover-26.3.0/CrossOver/lib/wine/'{x86_64-windows,x86_64-unix}%s", g_home, "");
+    make_dir("mkdir -p '%s/Library/Application Support/notproton/runners/"
+             "crossover-27.0-fex/CrossOver/lib/wine/'{x86_64,aarch64}'-windows'%s", g_home, "");
+    make_asset("trees/winefix/x86_64-windows/win32u.dll");
+    write_var("winefix.conf", "[winefix]\nsrc = trees/winefix\ndst = lib/wine\n");
+    ok(strstr(vars_json(), "{k:\"winefix\",l:\"winefix\",v:\"winefix\",t:[]}") != NULL,
+       "a tree landing in lib/wine without a build is offered nowhere");
+    write_var("winefix.conf", "[winefix]\nsrc = trees/winefix\ndst = lib/wine\nbuild = 26.3.0\n");
+    ok(strstr(vars_json(), "t:[\"notproton-26.3\"]") != NULL, "naming a build offers it to that build's tool");
+    write_var("winefix.conf", "[winefix]\nsrc = trees/winefix\ndst = lib/wine\nbuild = 27.0-fex\n");
+    ok(strstr(vars_json(), "t:[\"notproton-fex-rosetta\"]") != NULL,
+       "and only to the tools on that build that run the tree's architecture");
+    write_var("winefix.conf", "[winefix]\nsrc = trees/winefix\ndst = .\nbuild = 26.3.0\n");
+    ok(strstr(vars_json(), "t:[]") != NULL, "a dst that only lands through folders the tree lacks offers nothing");
+    clear_vars();
+    make_asset("trees/viaparent/dxmt/x86_64-windows/dxgi.dll");
+    write_var("viaparent.conf", "[viaparent]\nsrc = trees/viaparent\ndst = lib\n");
+    ok(strstr(vars_json(), "t:[\"notproton\",\"notproton-26.3\",\"notproton-fex-rosetta\"]") != NULL,
+       "lib/dxmt reached from dst = lib needs no build");
+
+    puts("== the steam bridge is not a variant's to change");
+    clear_vars();
+    make_asset("trees/bridge/x86_64-windows/win32u.dll");
+    make_asset("trees/bridge/x86_64-unix/lsteamclient.so");
+    write_var("bridge.conf", "[bridge]\nsrc = trees/bridge\ndst = lib/wine\nbuild = 26.3.0\n");
+    ok(strstr(vars_json(), "bridge") == NULL, "a tree carrying lsteamclient is not offered");
+    clear_vars();
+    write_var("bridge2.conf", "[bridge2]\nsrc = trees/winefix\ndst = lib/wine\nbuild = 26.3.0\n"
+                              "remove = ./x86_64-windows//ntdll.dll\n");
+    ok(strstr(vars_json(), "bridge2") == NULL, "removing ntdll however it is spelled is not offered");
+    clear_vars();
+    write_var("bridge3.conf", "[bridge3]\nsrc = trees/winefix\ndst = Lib/Wine\nbuild = 26.3.0\n"
+                              "remove = X86_64-Windows/NTDLL.DLL\n");
+    ok(strstr(vars_json(), "bridge3") == NULL, "or in another case, which APFS takes for the same file");
+
+    puts("== links in a tree are not followed");
+    clear_vars();
+    make_asset("elsewhere/x86_64-windows/d3d11.dll");
+    make_dir("mkdir -p '%s/trees/linked' && ln -s '%s/elsewhere/x86_64-windows' "
+             "\"$HOME/trees/linked/x86_64-windows\"", g_home, g_home);
+    write_var("linked.conf", "[linked]\nsrc = trees/linked\ndst = lib/dxmt\n");
+    ok(strcmp(vars_json(), "[]") == 0, "a tree holding only a linked folder is not offered");
+
+    puts("== removes");
+    clear_vars();
+    make_asset("Library/Application Support/notproton/runners/crossover-26.3.0/CrossOver/lib/dxmt/"
+               "x86_64-windows/nvapi64.dll");
+    make_dir("mkdir -p '%s/trees/emptytree'%s", g_home, "");
+    write_var("onlyremove.conf",
+              "[onlyremove]\nsrc = trees/emptytree\ndst = lib/dxmt\nremove = x86_64-windows/nvapi64.dll\n");
+    ok(strstr(vars_json(), "{k:\"onlyremove\",l:\"onlyremove\",v:\"onlyremove\",t:[\"notproton-26.3\"]}") != NULL,
+       "a variant that only removes is offered where the runner has the file");
+
     puts("== a tree holding nothing");
     clear_vars();
     make_dir("mkdir -p '%s/trees/empty/x86_64-windows'%s", g_home, "");
