@@ -1784,6 +1784,7 @@ game_name_xml=$(printf '%s' "$game_name" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g
 loader_root="$HOME/Library/Application Support/notproton/launchers/$app_id"
 mkdir -p "$loader_root"
 loader_app="$loader_root/$bundle_name.app"
+np_cursor_helper="$np_support/bridge/game-cursor.dylib"
 find "$loader_root" -maxdepth 1 -name '.build.*' -mmin +60 -exec rm -rf {} + 2>/dev/null || true
 loader_work=$(mktemp -d "$loader_root/.build.XXXXXX")
 loader_stage="$loader_work/new/$bundle_name.app"
@@ -1848,6 +1849,10 @@ else
   echo "loader staging failed, game mode unavailable" >> "$log" 2>&1 || true
 fi
 
+# Automatic cursor handling is confined to this game's Wine process tree.
+if [ -f "$np_cursor_helper" ]; then
+  cp "$np_cursor_helper" "$loader_macos/game-cursor.dylib"
+fi
 cat > "$loader_macos/launcher" <<LAUNCHER
 #!/bin/sh
 export WINELOADER="$WINELOADER"
@@ -1864,6 +1869,10 @@ if [ -n "\$STEAM_DYLD_INSERT_LIBRARIES" ]; then
 fi
 if [ -n "\$NOTPROTON_FEATURE_DYLIBS" ]; then
   export DYLD_INSERT_LIBRARIES="\${DYLD_INSERT_LIBRARIES:+\$DYLD_INSERT_LIBRARIES:}\$NOTPROTON_FEATURE_DYLIBS"
+fi
+cursor_helper="\$(dirname "\$WINELOADER")/game-cursor.dylib"
+if [ -f "\$cursor_helper" ]; then
+  export DYLD_INSERT_LIBRARIES="\${DYLD_INSERT_LIBRARIES:+\$DYLD_INSERT_LIBRARIES:}\$cursor_helper"
 fi
 [ -n "\$NOTPROTON_GAME_CWD" ] && cd "\$NOTPROTON_GAME_CWD"
 exec "$WINELOADER" "\$@"

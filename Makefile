@@ -584,10 +584,23 @@ $(APPINFO): helpers/appinfo.swift
 	swiftc -O -target $(ARCH)-apple-macos$(MIN_VER) -o $@ $<
 	@echo "==> Built $@"
 
-helpers-install: $(ICONMAKER) $(APPINFO)
+GAME_CURSOR := $(OUT_DIR)/game-cursor.dylib
+.PHONY: game-cursor cursor-check
+game-cursor: $(GAME_CURSOR)
+$(GAME_CURSOR): helpers/game-cursor.m
+	@mkdir -p $(OUT_DIR)
+	$(CC) -arch arm64 -arch x86_64 -mmacosx-version-min=$(MIN_VER) $(AVAIL) \
+		-fobjc-arc -O2 -Wall -Wextra -framework AppKit -framework QuartzCore \
+		-dynamiclib -install_name @rpath/game-cursor.dylib -o $@ $<
+	codesign --force --sign - $@
+cursor-check: game-cursor
+	python3 dylib/tests/cursor-check.py
+
+helpers-install: $(ICONMAKER) $(APPINFO) $(GAME_CURSOR)
 	$(call install_atomically,$(ICONMAKER),$(SUPPORT_DIR)/iconmaker)
 	$(call install_atomically,$(APPINFO),$(SUPPORT_DIR)/appinfo)
-	@echo "==> Installed: $(SUPPORT_DIR)/{iconmaker,appinfo}"
+	$(call install_atomically,$(GAME_CURSOR),$(SUPPORT_DIR)/bridge/game-cursor.dylib)
+	@echo "==> Installed: $(SUPPORT_DIR)/{iconmaker,appinfo,bridge/game-cursor.dylib}"
 
 dobby:
 	@mkdir -p $(DOBBY_DIR)
@@ -658,13 +671,14 @@ bridge:
 fonts:
 	fonts/build.sh
 
-app-payload: $(TARGET) $(OVERLAY_SHIM) $(ICONMAKER) $(APPINFO)
+app-payload: $(TARGET) $(OVERLAY_SHIM) $(ICONMAKER) $(APPINFO) $(GAME_CURSOR)
 	@mkdir -p "$(APP_PAYLOAD)/signatures/macos.arm64"
 	@mkdir -p "$(APP_PAYLOAD)/bridge"
 	cp -f $(TARGET) "$(APP_PAYLOAD)/notproton.dylib"
 	cp -f $(OVERLAY_SHIM) "$(APP_PAYLOAD)/overlay-shim.dylib"
 	cp -f $(ICONMAKER) "$(APP_PAYLOAD)/iconmaker"
 	cp -f $(APPINFO) "$(APP_PAYLOAD)/appinfo"
+	cp -f $(GAME_CURSOR) "$(APP_PAYLOAD)/bridge/"
 	cp -f dylib/feats/compat_run.sh "$(APP_PAYLOAD)/run"
 	cp -f signatures/macos.arm64/*.json "$(APP_PAYLOAD)/signatures/macos.arm64/"
 	@set -e; for spec in $(BRIDGE_FILES); do \
