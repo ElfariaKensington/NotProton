@@ -74,11 +74,20 @@ static BOOL cursorTarget(NSWindow *window, NSPoint screenPoint, NSInteger topNum
     NSPoint local = [view convertPoint:[window convertPointFromScreen:screenPoint] fromView:nil];
     return renderedAtPoint(view, local);
 }
-static BOOL shouldHideCursor(void) {
+static BOOL overGameRenderer(void) {
     if (!NSApp.isActive) return NO;
     NSPoint point = NSEvent.mouseLocation;
     NSInteger top = [NSWindow windowNumberAtPoint:point belowWindowWithWindowNumber:0];
     return cursorTarget(NSApp.keyWindow, point, top, NSApp.isActive, NSApp.modalWindow);
+}
+static BOOL wineRequestsHidden(void) {
+    if (!wineController || !wineWantsHidden) return NO;
+    BOOL *wanted = (BOOL *)((char *)(__bridge void *)wineController + ivar_getOffset(wineWantsHidden));
+    return *wanted;
+}
+static BOOL shouldHideCursor(void) {
+    // A GPU view alone says nothing about whether the game uses a hardware cursor.
+    return overGameRenderer() && wineRequestsHidden();
 }
 static void applyCursor(BOOL hide) {
     if (hide) {
@@ -118,8 +127,13 @@ static void updateWineCursorForTarget(id controller, SEL selector, BOOL force, B
         cursorSet(NSCursor.arrowCursor, @selector(set));
     }
 }
+static void applyWineCursorPolicy(BOOL gameTarget) {
+    applyCursor(gameTarget && wineRequestsHidden());
+}
 static void updateWineCursor(id controller, SEL selector, BOOL force) {
-    updateWineCursorForTarget(controller, selector, force, shouldHideCursor());
+    BOOL gameTarget = overGameRenderer();
+    updateWineCursorForTarget(controller, selector, force, gameTarget);
+    applyWineCursorPolicy(gameTarget);
 }
 static void watchWineCursor(void) {
     if (wineUpdateCursor) return;
@@ -138,9 +152,9 @@ static void watchWineCursor(void) {
 }
 static void refreshCursor(void) {
     watchWineCursor();
-    BOOL hide = shouldHideCursor();
-    applyCursor(hide);
-    if (wineController) updateWineCursorForTarget(wineController, NSSelectorFromString(@"updateCursor:"), NO, hide);
+    BOOL gameTarget = overGameRenderer();
+    applyWineCursorPolicy(gameTarget);
+    if (wineController) updateWineCursorForTarget(wineController, NSSelectorFromString(@"updateCursor:"), NO, gameTarget);
 }
 static void startWatching(void) {
     NSNotificationCenter *center = NSNotificationCenter.defaultCenter;

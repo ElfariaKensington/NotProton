@@ -7,7 +7,9 @@ installing any hooks, capturing executable identity before Wine rewrites argv.
 
 The system cursor becomes transparent only when the app is active, a visible game
 WineWindow is key, that window is topmost at the physical pointer location, and
-the pointer is over a visible Metal, hosted Metal or OpenGL rendering view. Native
+the pointer is over a visible Metal, hosted Metal or OpenGL rendering view, and
+the game has explicitly requested cursor hiding through Wine. Hardware cursors,
+including custom game cursors, remain visible when the game requests them. Native
 controls, titlebars, unrendered regions, child windows, utility windows, sheets,
 modal sessions and nonresizable titled dialog windows retain their cursor.
 
@@ -17,7 +19,7 @@ pointers when a window or surface changes. Coordinates are physical AppKit
 coordinates, independent of the optional resolution helper's Wine-only transforms.
 
 Cursor replacement uses a valid transparent bitmap and intercepts subsequent
-`NSCursor.set` calls while the pointer remains over the game renderer. It never
+`NSCursor.set` calls while the pointer remains over the game renderer and Wine’s hide request is active. It never
 calls global display hide APIs. Wine's retained hide request is temporarily
 suspended outside the game renderer so Wine balances its own hide/unhide state;
 the original request is preserved for returning to the game. Restoration

@@ -102,6 +102,16 @@ int main(int argc, char **argv) {
         wine->clientWantsCursorHidden=YES;wine->cursorHidden=YES;
         wineWantsHidden=class_getInstanceVariable(NPWineCursorState.class,"clientWantsCursorHidden");
         wineUpdateCursor=wineCursorUpdate;
+        wineController=wine;
+        wine->clientWantsCursorHidden=NO;
+        check(!wineRequestsHidden(),"hardware cursor remains visible when game requests it");
+        wine->clientWantsCursorHidden=YES;
+        check(wineRequestsHidden(),"explicit game hide request permits duplicate-cursor suppression");
+        testCurrent=NSCursor.crosshairCursor;applyWineCursorPolicy(YES);
+        check(testCurrent==transparentCursor,"explicit hide request suppresses only duplicate native cursor");
+        wine->clientWantsCursorHidden=NO;applyWineCursorPolicy(YES);
+        check(testCurrent==NSCursor.crosshairCursor,"game switching back to hardware cursor restores it immediately");
+        wine->clientWantsCursorHidden=YES;
         updateWineCursorForTarget(wine,@selector(updateCursor:),NO,NO);
         check(!wine->cursorHidden && wine->shows==1 && wine->clientWantsCursorHidden,"dialog releases Wine hide while preserving game request");
         updateWineCursorForTarget(wine,@selector(updateCursor:),NO,NO);
