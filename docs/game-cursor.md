@@ -18,7 +18,9 @@ coordinates, independent of the optional resolution helper's Wine-only transform
 
 Cursor replacement uses a valid transparent bitmap and intercepts subsequent
 `NSCursor.set` calls while the pointer remains over the game renderer. It never
-calls global display hide APIs or changes Wine's hide/unhide counter. Restoration
+calls global display hide APIs. Wine's retained hide request is temporarily
+suspended outside the game renderer so Wine balances its own hide/unhide state;
+the original request is preserved for returning to the game. Restoration
 reinstates the last requested cursor only if this helper still owns the transparent
 cursor. Resigning active, closing or leaving a game window restores that ownership.
 The OS retains control of cursor presentation across applications and process exit.

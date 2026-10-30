@@ -9,6 +9,9 @@ static NSCursor *transparentCursor, *requestedCursor;
 static BOOL showingTransparent;
 static void (*cursorSet)(id, SEL);
 static NSTimer *cursorTimer;
+static void (*wineUpdateCursor)(id, SEL, BOOL);
+static Ivar wineWantsHidden;
+static id wineController;
 
 static NSCursor *makeTransparentCursor(void) {
     NSBitmapImageRep *bitmap = [[NSBitmapImageRep alloc] initWithBitmapDataPlanes:NULL
@@ -101,12 +104,49 @@ static void setCursor(id cursor, SEL selector) {
     showingTransparent = hide;
     cursorSet(hide ? transparentCursor : cursor, selector);
 }
-static void refreshCursor(void) { applyCursor(shouldHideCursor()); }
+// Wine can carry SetCursor(NULL) from a splash/game into a modal dialog.
+// Let Wine balance its own hide count while temporarily suspending that request.
+static void updateWineCursorForTarget(id controller, SEL selector, BOOL force, BOOL gameTarget) {
+    BOOL *wanted = (BOOL *)((char *)(__bridge void *)controller + ivar_getOffset(wineWantsHidden));
+    BOOL requestedHidden = *wanted;
+    if (!gameTarget) *wanted = NO;
+    @try { wineUpdateCursor(controller, selector, force); }
+    @finally { *wanted = requestedHidden; }
+    if (!gameTarget && requestedHidden && NSApp.isActive && NSApp.keyWindow &&
+        [NSStringFromClass(NSApp.keyWindow.class) rangeOfString:@"Wine"].location != NSNotFound) {
+        // There is no game-provided cursor to restore while SetCursor(NULL) is pending.
+        cursorSet(NSCursor.arrowCursor, @selector(set));
+    }
+}
+static void updateWineCursor(id controller, SEL selector, BOOL force) {
+    updateWineCursorForTarget(controller, selector, force, shouldHideCursor());
+}
+static void watchWineCursor(void) {
+    if (wineUpdateCursor) return;
+    Class cls = NSClassFromString(@"WineApplicationController");
+    Method method = class_getInstanceMethod(cls, NSSelectorFromString(@"updateCursor:"));
+    Ivar wanted = class_getInstanceVariable(cls, "clientWantsCursorHidden");
+    if (!method || !wanted || ivar_getOffset(wanted) < 0 ||
+        (size_t)ivar_getOffset(wanted) + sizeof(BOOL) > class_getInstanceSize(cls)) return;
+    SEL shared = NSSelectorFromString(@"sharedController");
+    if (![cls respondsToSelector:shared]) return;
+    wineController = ((id (*)(id, SEL))objc_msgSend)(cls, shared);
+    if (!wineController) return;
+    wineWantsHidden = wanted;
+    wineUpdateCursor = (void *)method_getImplementation(method);
+    method_setImplementation(method, (IMP)updateWineCursor);
+}
+static void refreshCursor(void) {
+    watchWineCursor();
+    BOOL hide = shouldHideCursor();
+    applyCursor(hide);
+    if (wineController) updateWineCursorForTarget(wineController, NSSelectorFromString(@"updateCursor:"), NO, hide);
+}
 static void startWatching(void) {
     NSNotificationCenter *center = NSNotificationCenter.defaultCenter;
     [center addObserverForName:NSApplicationDidResignActiveNotification object:nil queue:nil
         usingBlock:^(NSNotification *note) {
-            (void)note; [cursorTimer invalidate]; cursorTimer = nil; applyCursor(NO);
+            (void)note; [cursorTimer invalidate]; cursorTimer = nil; refreshCursor();
         }];
     void (^activate)(void) = ^{
         if (!cursorTimer && NSApp.isActive) {
@@ -125,7 +165,10 @@ static void startWatching(void) {
         [center addObserverForName:name object:nil queue:nil usingBlock:^(NSNotification *note) {
             if ([note.name isEqualToString:NSWindowDidResignKeyNotification] ||
                 [note.name isEqualToString:NSWindowWillCloseNotification] ||
-                [note.name isEqualToString:NSWindowWillBeginSheetNotification]) applyCursor(NO);
+                [note.name isEqualToString:NSWindowWillBeginSheetNotification]) {
+                applyCursor(NO);
+                if (wineController) updateWineCursorForTarget(wineController, NSSelectorFromString(@"updateCursor:"), NO, NO);
+            }
             else refreshCursor();
         }];
     [center addObserverForName:NSApplicationWillTerminateNotification object:nil queue:nil
