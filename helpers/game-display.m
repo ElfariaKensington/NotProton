@@ -15,6 +15,7 @@ static CGDirectDisplayID npDisplay;
 static CGDisplayModeRef npMode;
 static char npManagedWindow, npAttemptedWindow, npOriginalWindow;
 static void scheduleWindow(NSWindow *window);
+static BOOL graphicsSurface(NSView *view);
 static _Thread_local unsigned npHandlingInput;
 static _Thread_local void *npInputWindow;
 
@@ -214,7 +215,13 @@ static void handleInput(id controller, SEL selector, NSEvent *event) {
     }
     Ivar capture = class_getInstanceVariable([controller class], "mouseCaptureWindow");
     NSWindow *captured = capture ? object_getIvar(controller, capture) : nil;
-    if (captured) window = captured;
+    // A startup/modal dialog must receive its own input even if the game left
+    // mouse capture on its splash/render window. Restore capture after dispatch.
+    BOOL dialogCapture = captured && window && captured != window && window.isVisible &&
+        [NSStringFromClass(window.class) rangeOfString:@"Wine"].location != NSNotFound &&
+        !graphicsSurface(window.contentView);
+    if (dialogCapture) object_setIvar(controller, capture, nil);
+    else if (captured) window = captured;
     npInputWindow = (__bridge void *)window;
     npHandlingInput++;
     @try {
@@ -222,6 +229,7 @@ static void handleInput(id controller, SEL selector, NSEvent *event) {
         else if (selector == NSSelectorFromString(@"handleMouseMove:")) mouseMove(controller, selector, event);
         else mouseScroll(controller, selector, event);
     } @finally {
+        if (dialogCapture && !object_getIvar(controller, capture)) object_setIvar(controller, capture, captured);
         npHandlingInput = previousDepth;
         npInputWindow = previousWindow;
     }

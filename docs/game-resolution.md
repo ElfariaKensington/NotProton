@@ -55,3 +55,15 @@ use the same forward/inverse transform. The native regression dispatches in-memo
 events through the Wine input boundary and checks dialog hits, fullscreen points,
 scrolling and cursor round trips at 1920×1080 and 2560×1600 without moving the
 system cursor or posting input to another app.
+
+A startup dialog can open while the game still owns mouse capture on its splash.
+Input dispatch suspends that stale capture for the dialog and restores it afterward,
+so buttons receive their own events. The live driver regression covers this case:
+
+```sh
+python3 dylib/tests/display-wine-check.py --native-dialog-input --resolution 2560x1600 --crossover-root "/path/to/CrossOver"
+```
+
+This dispatches native events directly through the actual Wine controller in a
+temporary prefix; No must close the real Windows MessageBox without WM_COMMAND.
+It does not post system input or interact with another running game.

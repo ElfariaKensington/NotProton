@@ -1,6 +1,7 @@
 // Optional live CrossOver regression: actual Windows desktop and fullscreen client dimensions.
 #include <windows.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <GL/gl.h>
 static HDC gameDC;
 static HGLRC gameGL;
@@ -10,6 +11,14 @@ static DWORD WINAPI dismiss_warning(void *unused) {
         HWND dialog=FindWindowA("#32770","NotProton driver warning");
         if (dialog) { Sleep(750);RECT rect;GetWindowRect(dialog,&rect);
             printf("dialog=%ldx%ld\n",rect.right-rect.left,rect.bottom-rect.top);fflush(stdout);
+            if (getenv("NP_TEST_NATIVE_DIALOG_INPUT")) {
+                RECT button;GetWindowRect(GetDlgItem(dialog,IDNO),&button);
+                POINT client={0,0};ClientToScreen(dialog,&client);
+                printf("buttonLocal=%ld,%ld\n",(button.left+button.right)/2-client.x,(button.top+button.bottom)/2-client.y);fflush(stdout);
+                Sleep(10000);
+                if (!IsWindow(dialog)) return 0;
+                puts("input=FAILED");fflush(stdout);
+            }
             SendMessageA(dialog,WM_COMMAND,IDNO,0);return 0; }
         Sleep(50);
     }
@@ -40,11 +49,12 @@ int main(int argc, char **argv) {
         printf("desktop=%dx%d\n",GetSystemMetrics(SM_CXSCREEN),GetSystemMetrics(SM_CYSCREEN));return 0;
     }
     CreateThread(NULL,0,dismiss_warning,NULL,0,NULL);
-    MessageBoxA(NULL,"The installed graphics driver has known issues.\nPlease choose a different rendering API.\n\n"
+    int answer=MessageBoxA(NULL,"The installed graphics driver has known issues.\nPlease choose a different rendering API.\n\n"
         "Installed driver: compatibility mode\nRecommended driver: newer version\n\n"
         "This warning must stay a normal dialog.\nIt must not enter a fullscreen Space.\n"
         "Its text must remain readable.\nIts buttons must retain their normal positions.\n\n"
         "Continue launching the game?", "NotProton driver warning", MB_YESNO|MB_ICONWARNING);
+    printf("inputResult=%d\n",answer);fflush(stdout);
     WNDCLASSA cls={0};cls.lpfnWndProc=procedure;cls.hInstance=GetModuleHandleA(NULL);cls.lpszClassName="NotProtonDisplayTest";RegisterClassA(&cls);
     HWND window=CreateWindowA(cls.lpszClassName,"NotProton fullscreen test",WS_OVERLAPPEDWINDOW|WS_VISIBLE,100,100,800,600,NULL,NULL,cls.hInstance,NULL);
     gameDC=GetDC(window);

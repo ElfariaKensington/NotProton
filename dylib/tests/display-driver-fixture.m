@@ -31,7 +31,9 @@ NSDictionary *np_display_probe(void) {
 @end
 @implementation NPInputEvent
 @end
-@interface WineApplicationController : NSObject
+@interface WineApplicationController : NSObject {
+@public NSWindow *mouseCaptureWindow;
+}
 @property NSDictionary *result;
 - (NSPoint)flippedMouseLocation:(NSPoint)point;
 - (void)handleMouseButton:(NSEvent *)event;
@@ -45,7 +47,8 @@ NSDictionary *np_display_probe(void) {
 - (void)handleMouseButton:(NSEvent *)event {
     CGPoint point = CGEventGetLocation(event.CGEvent);
     NSPoint cocoa = [self flippedMouseLocation:NSPointFromCGPoint(point)];
-    NSRect content = [event.window contentRectForFrameRect:event.window.frame];
+    NSWindow *target=mouseCaptureWindow ?: event.window;
+    NSRect content = [target contentRectForFrameRect:target.frame];
     self.result = @{@"hit": @(NSMouseInRect(cocoa, content, NO)), @"x": @(point.x), @"y": @(point.y),
                     @"cocoaX": @(cocoa.x), @"cocoaY": @(cocoa.y)};
 }
@@ -54,10 +57,16 @@ NSDictionary *np_display_probe(void) {
 @end
 NSDictionary *np_input_probe(NSWindow *window, CGPoint physical, CGFloat screenTop, CGPoint (*rawLocation)(CGEventRef)) {
     WineApplicationController *controller = [WineApplicationController new];
+    NSWindow *capture;
+    if ([window.title isEqualToString:@"Graphics driver warning"]) {
+        capture=[[NSWindow alloc] initWithContentRect:NSMakeRect(0,0,50,50) styleMask:0 backing:NSBackingStoreBuffered defer:NO];
+        controller->mouseCaptureWindow=capture;
+    }
     CGEventRef cg = CGEventCreateMouseEvent(NULL, kCGEventLeftMouseDown, physical, kCGMouseButtonLeft);
     NPInputEvent *event = [NPInputEvent new];event.window = window;event.CGEvent = cg;event.type = NSEventTypeLeftMouseDown;
     [controller handleMouseButton:(NSEvent *)(id)event];
     NSMutableDictionary *result = [controller.result mutableCopy];
+    result[@"captureRestored"]=@(!capture || controller->mouseCaptureWindow==capture);
     NSPoint cursor = [controller flippedMouseLocation:NSMakePoint(physical.x, screenTop - physical.y)];
     result[@"pollMatches"] = @(fabs(cursor.x - [result[@"x"] doubleValue]) < .01 &&
                               fabs(cursor.y - [result[@"y"] doubleValue]) < .01);
