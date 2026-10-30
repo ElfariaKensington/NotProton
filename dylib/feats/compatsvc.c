@@ -351,6 +351,8 @@ static int answer_json(uintptr_t response, uint32_t appid, const char *json) {
     return RESULT_OK;
 }
 
+#include "displayservice.h"
+
 // JSON for the CrossOver panel, in default_tool_identifier.
 static int prefix_state(uintptr_t request, uintptr_t response) {
     uint32_t appid = request_appid(request);
@@ -618,6 +620,11 @@ void np_compatsvc_register(const struct mach_header_64 *mh, intptr_t slide,
                                     backup_and_rebuild_prefix)
         || !np_webui_register_route(ROUTE_OPEN_LOG, request, response, open_prefix_log))
         NP_WARN("compatsvc: the Compatibility page cannot rebuild prefixes");
+
+    if (!np_webui_register_route("NotProton.GetDisplay#1", request, response, get_display)
+        || !np_webui_register_route("NotProton.SetDisplay#1", specify_request,
+                                    specify_response, set_display))
+        NP_WARN("compatsvc: the Compatibility page cannot save display settings");
 
     uintptr_t notification = np_rtti_vptr(mh, slide, text_base, text_size,
                                           TYPE_STATE_CHANGED);

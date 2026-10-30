@@ -14,7 +14,8 @@ static NSString *processImage(void) {
     // launch arguments directly instead of caching an early "wine" identity.
     int argc = *_NSGetArgc();
     char **argv = *_NSGetArgv();
-    for (int i = 0; i < argc; ++i) {
+    for (int i = 0; argv && i < argc; ++i) {
+        if (!argv[i] || !*argv[i]) continue; // Wine can clear argv slots after startup.
         NSString *argument = [NSString stringWithUTF8String:argv[i]];
         if (argument && [argument.pathExtension caseInsensitiveCompare:@"exe"] == NSOrderedSame)
             return argument;

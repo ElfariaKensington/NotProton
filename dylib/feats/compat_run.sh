@@ -1661,6 +1661,35 @@ native_vc_runtime() {
   done
 }
 
+# Resolution settings are prefix-local and apply to the foreground game only.
+np_display_resolution=""
+np_display_helper="$np_support/bridge/game-display.dylib"
+if [ "$verb" = waitforexitandrun ] && [ -n "$STEAM_COMPAT_DATA_PATH" ] \
+  && [ -f "$STEAM_COMPAT_DATA_PATH/notproton-display" ]; then
+  IFS= read -r np_display_resolution < "$STEAM_COMPAT_DATA_PATH/notproton-display" || true
+  np_display_width=${np_display_resolution%%x*}
+  np_display_height=${np_display_resolution#*x}
+  np_display_valid=0
+  case "$np_display_resolution" in
+    '' | *[!0-9x]* | *x*x*) ;;
+    *x*)
+      if [ -n "$np_display_width" ] && [ -n "$np_display_height" ] \
+        && [ "${#np_display_width}" -le 5 ] && [ "${#np_display_height}" -le 5 ] \
+        && [ "$np_display_width" -ge 640 ] && [ "$np_display_height" -ge 480 ] \
+        && [ "$np_display_width" -le 16384 ] && [ "$np_display_height" -le 16384 ]; then
+        np_display_valid=1
+      fi ;;
+  esac
+  if [ "$np_display_valid" != 1 ]; then
+    show_alert "Invalid fullscreen resolution" "Choose a valid fullscreen resolution in this game's Compatibility settings, then launch again."
+    exit 1
+  fi
+  if [ ! -f "$np_display_helper" ]; then
+    show_alert "Fullscreen resolution helper is missing" "Open NotProton and install its updated files, then launch the game again."
+    exit 1
+  fi
+fi
+
 if [ -n "$STEAM_COMPAT_DATA_PATH" ]; then
   export WINEPREFIX="$STEAM_COMPAT_DATA_PATH/pfx"
   stage_step="prefix lock"
@@ -2039,7 +2068,7 @@ fi
 np_bundle_cache="$loader_root/.notproton-bundle-cache.json"
 np_bundle_parameters="$game_name|$meta_icon|$meta_clienticon|${NOTPROTON_HIDE_LAUNCHER_TILE:-0}|$np_single_icon|$WINELOADER"
 np_bundle_stamp() {
-  set -- "$1" "$np_bundle_cache" "$np_bundle_parameters" "$2" "$0" "$loader_app" "$wine_unix" "$loader_root/game.icns" "$loader_root/notproton-icon.source" "$client_root/appcache/librarycache/$app_id"
+  set -- "$1" "$np_bundle_cache" "$np_bundle_parameters" "$2" "$0" "$loader_app" "$wine_unix" "$loader_root/game.icns" "$loader_root/notproton-icon.source" "$client_root/appcache/librarycache/$app_id" "$np_display_helper"
   # Rebuild the cached launcher when its single-icon helpers are updated.
   [ "$np_single_icon" != 1 ] || set -- "$@" "$np_game_host" "$np_game_client"
   np_cache "$@"
@@ -2112,6 +2141,10 @@ else
   echo "loader staging failed, game mode unavailable" >> "$log" 2>&1 || true
 fi
 
+# Always stage the helper when available, so changing the setting needs no reinstall.
+if [ -f "$np_display_helper" ]; then
+  cp "$np_display_helper" "$loader_macos/game-display.dylib"
+fi
 cat > "$loader_macos/launcher" <<LAUNCHER
 #!/bin/sh
 export WINELOADER="$WINELOADER"
@@ -2132,6 +2165,14 @@ fi
 if [ -n "\$NOTPROTON_GAME_CHANNEL" ]; then
   client="\$(dirname "\$WINELOADER")/game-client.dylib"
   export DYLD_INSERT_LIBRARIES="\${DYLD_INSERT_LIBRARIES:+\$DYLD_INSERT_LIBRARIES:}\$client"
+fi
+if [ -n "\$NOTPROTON_DISPLAY_RESOLUTION" ]; then
+  display_helper="\$(dirname "\$WINELOADER")/game-display.dylib"
+  if [ ! -f "\$display_helper" ]; then
+    echo "NotProton fullscreen resolution helper is missing" >&2
+    exit 1
+  fi
+  export DYLD_INSERT_LIBRARIES="\${DYLD_INSERT_LIBRARIES:+\$DYLD_INSERT_LIBRARIES:}\$display_helper"
 fi
 [ -n "\$NOTPROTON_GAME_CWD" ] && cd "\$NOTPROTON_GAME_CWD"
 exec "$WINELOADER" "\$@"
@@ -2552,6 +2593,7 @@ set -- \
   --env STEAM_COMPAT_CLIENT_INSTALL_PATH="$STEAM_COMPAT_CLIENT_INSTALL_PATH" \
   --env STEAM_COMPAT_APP_ID="$STEAM_COMPAT_APP_ID" \
   --env STEAM_DYLD_INSERT_LIBRARIES="$STEAM_DYLD_INSERT_LIBRARIES" \
+  --env NOTPROTON_DISPLAY_RESOLUTION="$np_display_resolution" \
   --env NOTPROTON_FEATURE_DYLIBS="$np_feat_dylibs" \
   --env NOTPROTON_GAME_CWD="$game_cwd" "$@"
 lsregister="/System/Library/Frameworks/CoreServices.framework/Versions/A"

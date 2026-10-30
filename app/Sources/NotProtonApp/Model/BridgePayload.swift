@@ -16,6 +16,7 @@ enum BridgePayload {
     static let entries: [Entry] = [
         Entry(resource: "game-host", bridgePaths: ["game-host"]),
         Entry(resource: "game-client.dylib", bridgePaths: ["game-client.dylib"]),
+        Entry(resource: "game-display.dylib", bridgePaths: ["game-display.dylib"]),
         Entry(resource: "steam.exe", bridgePaths: [
             "steam.exe",
         ]),

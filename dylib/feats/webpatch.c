@@ -4,6 +4,7 @@
 #include "webpatch_gameenv.h"
 #include "../util/buildid.h"
 #include "nativeplatform.h"
+#include "webpatch_display.h"
 #include "../util/log.h"
 
 #include <dirent.h>
@@ -875,9 +876,10 @@ static int out_expand(np_out_t *o, const char *replace, const np_cap_t *caps) {
     "G=k=>\"DXMT_CONFIG\"===k?(own.some(fk)?g(k):DF[k]||\"\"):has(k)?g(k):DF[k]||\"\";" \
     "if(t.unAppID<2147483648&&(t.vecPlatforms||[]).indexOf(\"osx\")>=0" \
     "&&!t.strCompatToolName)return null;" \
-    "return MSCXPanel({fex,get:G,saved:g,set:L.s,clearUnused:1,dev:1,dflt:lost?null:k=>DF[k],head:" \
+    "const panel=MSCXPanel({fex,get:G,saved:g,set:L.s,clearUnused:1,dev:1,dflt:lost?null:k=>DF[k],head:" \
     "typeof MSCXPrefixRow==\"function\"&&(0," RT ".jsx)(\"div\",{className:\"MSCXRow\",ref:e=>e&&MSCXPrefixRow(e,t.unAppID)},\"npstate\")" \
-    "})}"
+    "});return(0," RT ".jsx)(\"div\",{className:\"MSCXPanel\",children:(0," RT ".jsxs)(" RT ".Fragment,{children:" \
+    "panel.props.children.props.children.concat([" NP_CX_DISPLAY_SECTION(RT, BARREL) "])})})}"
 
 // React breaks if the hook count changes between renders, so the hooks wait in their own component
 // until Steam's globals exist.

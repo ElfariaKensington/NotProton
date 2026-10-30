@@ -39,7 +39,7 @@ struct BridgePayloadTests {
         #expect(throws: StepFailure.self) { try BridgePayload.locate(root: root) }
     }
 
-    @Test("Stage writes all bridge paths")
+    @Test("Stage writes every bridge path")
     func stageWritesAll() throws {
         let work = try scratchDirectory("bridge")
         defer { try? FileManager.default.removeItem(at: work) }

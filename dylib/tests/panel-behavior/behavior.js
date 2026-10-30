@@ -21,7 +21,7 @@ for (const form of Object.keys(FORMS)) {
        'a shortcut renders the panel before a tool name reaches the page');
 
   let r = nodes('');
-  t.ok(toggles(r).length === 7 && sections(r).length === 4, 'automatic shows seven toggles and the environment section');
+  t.ok(toggles(r).length === 7 && sections(r).length === 5, 'automatic shows seven toggles and both per-game sections');
   t.ok(r.filter(x => x.type === 'Dropdown').length === 2, 'two dropdowns');
   t.ok(!('label' in r.find(x => x.type === 'Dropdown').props), 'the backend dropdown carries no label column');
 
@@ -94,8 +94,8 @@ for (const form of Object.keys(FORMS)) {
   raw('NOTPROTON_RAW_CONTROLLERS=1 WINEMSYNC=1').props.onChange(false);
   t.ok(last().trim() === 'WINEMSYNC=1 %command%', `turning the controller row off removes its flag (${last()})`);
   const css = nodes('').filter(x => x.type === 'style');
-  t.ok(css.length === 2 && css[0].props.children.includes('.MSCXPanel .MSCXRow{'),
-       'the panel keeps the row stylesheet alongside the environment stylesheet');
+  t.ok(css.length === 3 && css[0].props.children.includes('.MSCXPanel .MSCXRow{'),
+       'the panel keeps the row stylesheet alongside both per-game stylesheets');
   t.ok(css[0].props.children.includes('.MSCXPanel .MSCXRowDesc>:last-child{flex-basis:100%}'),
        'and the rule that drops a description onto its own line');
 

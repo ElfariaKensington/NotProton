@@ -85,15 +85,17 @@ class LaunchFastPaths(unittest.TestCase):
         dependency.unlink()
         self.assertNotEqual(self.run_code('NP_METADATA_CACHE', 'read', *args).returncode, 0)
 
-    def test_single_icon_helpers_invalidate_bundle_cache(self):
+    def test_native_helpers_invalidate_bundle_cache(self):
         host, client = self.root / 'game-host', self.root / 'game-client.dylib'
+        display = self.root / 'game-display.dylib'
+        display.write_text('display v1')
         host.write_text('host v1')
         client.write_text('client v1')
         functions = '\n'.join(re.search(r'^' + name + r'\(\) \{\n.*?^\}', SOURCE, re.M | re.S)[0]
                               for name in ('np_cache', 'np_bundle_stamp'))
         parameters = re.search(r'^np_bundle_parameters=.*$', SOURCE, re.M)[0]
         env = dict(os.environ, np_game_host=str(host), np_game_client=str(client),
-                   np_single_icon='1', np_bundle_cache=str(self.root / 'bundle-cache.json'),
+                   np_single_icon='1', np_display_helper=str(display), np_bundle_cache=str(self.root / 'bundle-cache.json'),
                    loader_root=str(self.root), loader_app=str(self.root / 'Game.app'),
                    wine_unix=str(self.root / 'runner'), client_root=str(self.root),
                    game_name='Example', app_id='480', WINELOADER='/runner/wine')
@@ -106,6 +108,9 @@ class LaunchFastPaths(unittest.TestCase):
         self.assertNotEqual(stamp('read'), 0)
         self.assertEqual(stamp('write'), 0)
         host.write_text('host v2')
+        self.assertNotEqual(stamp('read'), 0)
+        self.assertEqual(stamp('write'), 0)
+        display.write_text('display v2')
         self.assertNotEqual(stamp('read'), 0)
         self.assertEqual(stamp('write'), 0)
         env['np_single_icon'] = '0'
