@@ -18,6 +18,19 @@
 @implementation GLView
 - (BOOL)hasGLDescendant { return YES; }
 @end
+@interface NPWineCursorState : NSObject {
+@public BOOL clientWantsCursorHidden, cursorHidden;
+@public unsigned hides, shows;
+}
+@end
+@implementation NPWineCursorState
+@end
+static void wineCursorUpdate(id value, SEL selector, BOOL force) {
+    (void)selector; (void)force;
+    NPWineCursorState *state=value;
+    if(state->clientWantsCursorHidden && !state->cursorHidden){state->cursorHidden=YES;state->hides++;}
+    if(!state->clientWantsCursorHidden && state->cursorHidden){state->cursorHidden=NO;state->shows++;}
+}
 static int failures, checks;
 static NSCursor *testCurrent;
 static unsigned sets;
@@ -85,6 +98,18 @@ int main(int argc, char **argv) {
         check(testCurrent==NSCursor.IBeamCursor,"focus change does not overwrite another owner's cursor");
         applyCursor(YES);testCurrent=NSCursor.arrowCursor;applyCursor(YES);
         check(testCurrent==transparentCursor,"late Wine cursor changes are suppressed");applyCursor(NO);
+        NPWineCursorState *wine=[NPWineCursorState new];
+        wine->clientWantsCursorHidden=YES;wine->cursorHidden=YES;
+        wineWantsHidden=class_getInstanceVariable(NPWineCursorState.class,"clientWantsCursorHidden");
+        wineUpdateCursor=wineCursorUpdate;
+        updateWineCursorForTarget(wine,@selector(updateCursor:),NO,NO);
+        check(!wine->cursorHidden && wine->shows==1 && wine->clientWantsCursorHidden,"dialog releases Wine hide while preserving game request");
+        updateWineCursorForTarget(wine,@selector(updateCursor:),NO,NO);
+        check(wine->shows==1,"dialog does not unhide repeatedly");
+        updateWineCursorForTarget(wine,@selector(updateCursor:),NO,YES);
+        check(wine->cursorHidden && wine->hides==1,"returning to game restores Wine hide request");
+        updateWineCursorForTarget(wine,@selector(updateCursor:),NO,NO);
+        check(!wine->cursorHidden && wine->shows==2,"focus loss or next dialog releases Wine hide again");
         method_setImplementation(current,old);
         printf("cursor: %d policy and ownership checks; %d failures\n",checks,failures);
         return failures?1:0;
