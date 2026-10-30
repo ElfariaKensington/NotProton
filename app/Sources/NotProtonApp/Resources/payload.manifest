@@ -1,3 +1,4 @@
+built    game-cursor.dylib
 built    game-host
 built    game-client.dylib
 built    game-display.dylib

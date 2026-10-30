@@ -2059,6 +2059,7 @@ game_name_xml=$(printf '%s' "$game_name" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g
 loader_root="$HOME/Library/Application Support/notproton/launchers/$app_id"
 mkdir -p "$loader_root"
 loader_app="$loader_root/$bundle_name.app"
+np_cursor_helper="$np_support/bridge/game-cursor.dylib"
 np_game_host="$np_support/bridge/game-host"
 np_game_client="$np_support/bridge/game-client.dylib"
 np_single_icon=0
@@ -2068,7 +2069,7 @@ fi
 np_bundle_cache="$loader_root/.notproton-bundle-cache.json"
 np_bundle_parameters="$game_name|$meta_icon|$meta_clienticon|${NOTPROTON_HIDE_LAUNCHER_TILE:-0}|$np_single_icon|$WINELOADER"
 np_bundle_stamp() {
-  set -- "$1" "$np_bundle_cache" "$np_bundle_parameters" "$2" "$0" "$loader_app" "$wine_unix" "$loader_root/game.icns" "$loader_root/notproton-icon.source" "$client_root/appcache/librarycache/$app_id" "$np_display_helper"
+  set -- "$1" "$np_bundle_cache" "$np_bundle_parameters" "$2" "$0" "$loader_app" "$wine_unix" "$loader_root/game.icns" "$loader_root/notproton-icon.source" "$client_root/appcache/librarycache/$app_id" "$np_display_helper" "$np_cursor_helper"
   # Rebuild the cached launcher when its single-icon helpers are updated.
   [ "$np_single_icon" != 1 ] || set -- "$@" "$np_game_host" "$np_game_client"
   np_cache "$@"
@@ -2145,6 +2146,10 @@ fi
 if [ -f "$np_display_helper" ]; then
   cp "$np_display_helper" "$loader_macos/game-display.dylib"
 fi
+# Automatic cursor handling is confined to this game's Wine process tree.
+if [ -f "$np_cursor_helper" ]; then
+  cp "$np_cursor_helper" "$loader_macos/game-cursor.dylib"
+fi
 cat > "$loader_macos/launcher" <<LAUNCHER
 #!/bin/sh
 export WINELOADER="$WINELOADER"
@@ -2173,6 +2178,10 @@ if [ -n "\$NOTPROTON_DISPLAY_RESOLUTION" ]; then
     exit 1
   fi
   export DYLD_INSERT_LIBRARIES="\${DYLD_INSERT_LIBRARIES:+\$DYLD_INSERT_LIBRARIES:}\$display_helper"
+fi
+cursor_helper="\$(dirname "\$WINELOADER")/game-cursor.dylib"
+if [ -f "\$cursor_helper" ]; then
+  export DYLD_INSERT_LIBRARIES="\${DYLD_INSERT_LIBRARIES:+\$DYLD_INSERT_LIBRARIES:}\$cursor_helper"
 fi
 [ -n "\$NOTPROTON_GAME_CWD" ] && cd "\$NOTPROTON_GAME_CWD"
 exec "$WINELOADER" "\$@"
