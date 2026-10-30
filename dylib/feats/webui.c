@@ -23,7 +23,14 @@ static inline int32_t sign_extend(uint32_t val, int bits) {
 
 #define VT_RUN_MIN 8
 
-#define MAX_ROUTES 8
+// Keep stable per-route job vtables. One slot list defines capacity and every
+// callable factory, so increasing capacity cannot leave null factory entries.
+#define ROUTE_SLOTS(X) \
+    X(0) X(1) X(2) X(3) X(4) X(5) X(6) X(7) \
+    X(8) X(9) X(10) X(11) X(12) X(13) X(14) X(15)
+#define COUNT_ROUTE(i) + 1
+enum { MAX_ROUTES = 0 ROUTE_SLOTS(COUNT_ROUTE) };
+#undef COUNT_ROUTE
 
 #define REGISTRY_MAP_OFF   96
 #define MAP_ELEMENTS_OFF   48
@@ -484,12 +491,14 @@ static uintptr_t build_job(int route, uintptr_t dispatcher, uintptr_t arg) {
 // The dispatcher calls a factory with no route, so each route needs a factory of its own.
 #define JOB_FACTORY(i) \
     static uintptr_t job_factory_##i(uintptr_t d, uintptr_t a) { return build_job(i, d, a); }
-JOB_FACTORY(0) JOB_FACTORY(1) JOB_FACTORY(2) JOB_FACTORY(3)
-JOB_FACTORY(4) JOB_FACTORY(5) JOB_FACTORY(6) JOB_FACTORY(7)
-static const np_job_factory_fn g_job_factories[MAX_ROUTES] = {
-    job_factory_0, job_factory_1, job_factory_2, job_factory_3,
-    job_factory_4, job_factory_5, job_factory_6, job_factory_7,
-};
+ROUTE_SLOTS(JOB_FACTORY)
+#undef JOB_FACTORY
+#define FACTORY_ENTRY(i) job_factory_##i,
+static const np_job_factory_fn g_job_factories[] = { ROUTE_SLOTS(FACTORY_ENTRY) };
+#undef FACTORY_ENTRY
+#undef ROUTE_SLOTS
+_Static_assert(sizeof g_job_factories / sizeof g_job_factories[0] == MAX_ROUTES,
+               "every WebUI route slot needs a job factory");
 
 int np_webui_register_route(const char *name, uintptr_t request_vptr,
                            uintptr_t response_vptr, np_webui_handler_fn handler) {

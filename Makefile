@@ -193,7 +193,14 @@ prefixstate-check:
 
 COMPATSVC_CHECK := $(OUT_DIR)/compatsvc-check
 
-compatsvc-check:
+WEBUI_CHECK := $(OUT_DIR)/webui-check
+.PHONY: webui-check
+webui-check:
+	@mkdir -p $(OUT_DIR)
+	$(TEST_CC) -o $(WEBUI_CHECK) dylib/tests/webui-check.c dylib/core/macho.c
+	$(WEBUI_CHECK)
+
+compatsvc-check: webui-check
 	@if [ ! -f dylib/tests/compatsvc-check.c ]; then $(call SKIP,compatsvc-check,dylib/tests/compatsvc-check.c); exit 0; fi; \
 	mkdir -p $(OUT_DIR) && \
 	$(TEST_CC) -o $(COMPATSVC_CHECK) dylib/tests/compatsvc-check.c && \
