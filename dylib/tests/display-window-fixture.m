@@ -48,7 +48,7 @@ int main(int argc, const char **argv) {
             NSPoint cocoa = window ? [window convertPointToScreen:[window.contentView convertPoint:local toView:nil]] : NSZeroPoint;
             NSDictionary *input = window ? inputProbe(window, CGPointMake(cocoa.x, original.size.height - cocoa.y), original.size.height, rawLocation) : @{};
             BOOL fullscreenInput = [input[@"hit"] boolValue] && [input[@"pollMatches"] boolValue] &&
-                [input[@"warpMatches"] boolValue] && [input[@"scrollMatches"] boolValue] && fabs([input[@"x"] doubleValue] - targetWidth*.8) < 1 &&
+                [input[@"warpMatches"] boolValue] && [input[@"scrollMatches"] boolValue] && [input[@"captureRestored"] boolValue] && fabs([input[@"x"] doubleValue] - targetWidth*.8) < 1 &&
                 fabs([input[@"y"] doubleValue] - targetHeight*.75) < 1;
             NSColor *canvasColor = window.contentView.layer.backgroundColor ? [NSColor colorWithCGColor:window.contentView.layer.backgroundColor] : nil;
             NSDictionary *state = @{@"virtual": virtual, @"policy": @(app.activationPolicy), @"physicalWidth": @(actual.size.width),
@@ -102,7 +102,7 @@ int main(int argc, const char **argv) {
                 NSPoint button = [dialog convertPointToScreen:NSMakePoint(500,40)];
                 NSDictionary *input = inputProbe(dialog, CGPointMake(button.x, original.size.height - button.y), original.size.height, rawLocation);
                 dialogClickable = [input[@"hit"] boolValue] && [input[@"pollMatches"] boolValue] &&
-                    [input[@"warpMatches"] boolValue] && [input[@"scrollMatches"] boolValue] && fabs([input[@"x"] doubleValue] - button.x) < 1 &&
+                    [input[@"warpMatches"] boolValue] && [input[@"scrollMatches"] boolValue] && [input[@"captureRestored"] boolValue] && fabs([input[@"x"] doubleValue] - button.x) < 1 &&
                     fabs([input[@"y"] doubleValue] - (targetHeight - button.y)) < 1;
                 [dialog close];
                 window = [[WineWindow alloc] initWithContentRect:NSMakeRect(100,100,800,600)
