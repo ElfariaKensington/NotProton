@@ -94,12 +94,13 @@ with tempfile.TemporaryDirectory(prefix='np-display-wine-') as temporary:
     enforced, log = run(args.resolution, window=True)
     assert enforced == tuple(args.resolution.split('x') * 2), (enforced, log[-3000:])
     assert 'entered native fullscreen at ' + args.resolution in log, log[-4000:]
+    assert 'windowedClient=800x600' in log, 'Game could not return to windowed mode: '+log
     dialog=re.search(r'dialog=(\d+)x(\d+)',log)
     assert dialog and int(dialog[1])<900 and int(dialog[2])<500, 'startup dialog was enlarged: '+log[-4000:]
     if args.native_dialog_input:
         assert 'input=FAILED' not in log and 'inputResult=7' in log and 'nativeDialogInput=captureRestored' in log, log
         print('Real Wine dialog: native mouse click selects No despite stale splash capture; capture restored.', flush=True)
-    print('Wine graphics window: '+args.resolution+' fullscreen; startup warning stays windowed; physical display unchanged.', flush=True)
+    print('Wine graphics window: '+args.resolution+' fullscreen; game returns to 800x600 windowed; physical display unchanged.', flush=True)
     restored, _ = run('')
     assert restored[:2] == baseline[:2], (baseline, restored)
     print('Disabling enforcement restores the default Wine desktop.', flush=True)

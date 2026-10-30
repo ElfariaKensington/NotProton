@@ -33,9 +33,11 @@ class DisplayIntegration(unittest.TestCase):
     def tearDownClass(cls):
         cls.temp.cleanup()
 
-    def probe(self, resolution='', window=False, exit_space=False):
+    def probe(self, resolution='', window=False, exit_space=False, game_windowed=False, stay_windowed=False):
         env = dict(self.env, NOTPROTON_DISPLAY_RESOLUTION=resolution)
         if exit_space: env['NP_DISPLAY_TEST_EXIT']='1'
+        if game_windowed: env['NP_DISPLAY_TEST_GAME_WINDOWED']='1'
+        if stay_windowed: env['NP_DISPLAY_TEST_STAY_WINDOWED']='1'
         run = subprocess.run([str(self.loader)] + (['--window', 'Fixture.exe'] if window else []),
                              env=env, capture_output=True, text=True, timeout=18)
         self.assertEqual(run.returncode, 0, run.stderr + run.stdout)
@@ -76,6 +78,16 @@ class DisplayIntegration(unittest.TestCase):
         state = self.probe('2560x1600', window=True)
         self.assertTrue(state['fullscreen'] and state['fullscreenInput'], state)
         self.assertTrue(state['dialogClickable'], state)
+
+    def test_rendered_window_does_not_force_fullscreen(self):
+        state = self.probe('1920x1080', window=True, stay_windowed=True)
+        self.assertFalse(state['fullscreen'], state)
+        self.assertTrue(state['gameWindowed'], state)
+
+    def test_game_can_switch_to_windowed_mode(self):
+        state = self.probe('1920x1080', window=True, game_windowed=True)
+        self.assertTrue(state['gameWindowed'], state)
+        self.assertFalse(state['fullscreen'], state)
 
     def test_exit_restores_window_chrome(self):
         state = self.probe('1920x1080', window=True, exit_space=True)

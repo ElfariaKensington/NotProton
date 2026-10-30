@@ -9,9 +9,9 @@ settings are never placed in Steam launch options.
 
 The generated game app declares `public.app-category.games`. An enabled override
 injects the universal `game-display.dylib` into that game's Wine launcher and its
-children. It creates a native AppKit fullscreen Space for the main Wine window,
-excluding background Wine helpers and utility windows. Normal fullscreen exit
-remains available.
+children. It creates a native AppKit fullscreen Space only when the game requests a borderless
+window covering the selected virtual desktop,
+excluding background Wine helpers and utility windows. Normal fullscreen exit and the game’s own windowed-mode selection remain available.
 
 The helper exposes one virtual mode through the Wine Mac driver's CoreGraphics
 mode, pixel-size and bounds queries and its NSScreen queries. Real CGDisplayMode
@@ -67,3 +67,9 @@ python3 dylib/tests/display-wine-check.py --native-dialog-input --resolution 256
 This dispatches native events directly through the actual Wine controller in a
 temporary prefix; No must close the real Windows MessageBox without WM_COMMAND.
 It does not post system input or interact with another running game.
+
+Rendered, titled game windows stay windowed. Returning to windowed mode through
+the game restores its requested style and client dimensions after the native Space
+transition. Wine’s saved non-fullscreen frame is updated before exit, preventing
+its fullscreen geometry from overwriting the game’s windowed request. The live
+regression switches from a 2560×1600 borderless request to an 800×600 client.

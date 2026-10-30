@@ -13,7 +13,8 @@ static unsigned npWidth, npHeight;
 static BOOL npGameProcess;
 static CGDirectDisplayID npDisplay;
 static CGDisplayModeRef npMode;
-static char npManagedWindow, npAttemptedWindow, npOriginalWindow;
+static char npManagedWindow, npAttemptedWindow, npOriginalWindow, npLeavingFullscreen, npWindowedStyle, npWindowedFrame;
+static void restoreWindow(NSWindow *window);
 static void scheduleWindow(NSWindow *window);
 static BOOL graphicsSurface(NSView *view);
 static _Thread_local unsigned npHandlingInput;
@@ -288,12 +289,63 @@ static BOOL graphicsSurface(NSView *view) {
     for (NSView *child in view.subviews) if (graphicsSurface(child)) return YES;
     return NO;
 }
+static void (*wineSetFrame)(id, SEL, NSRect);
+static void (*wineSetFeatures)(id, SEL, const void *);
+static void leaveFullscreenForGame(NSWindow *window) {
+    if (objc_getAssociatedObject(window, &npLeavingFullscreen)) return;
+    objc_setAssociatedObject(window, &npLeavingFullscreen, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    NSValue *requested = objc_getAssociatedObject(window, &npWindowedFrame);
+    NSNumber *style = objc_getAssociatedObject(window, &npWindowedStyle);
+    Ivar savedFrame = class_getInstanceVariable(window.class, "nonFullscreenFrame");
+    if (requested && savedFrame && ivar_getOffset(savedFrame) >= 0 &&
+        (size_t)ivar_getOffset(savedFrame) + sizeof(NSRect) <= class_getInstanceSize(window.class)) {
+        NSRect content = requested.rectValue;
+        content.origin.y = npHeight - NSMaxY(content);
+        NSWindowStyleMask targetStyle = style ? style.unsignedIntegerValue : window.styleMask & ~NSWindowStyleMaskFullScreen;
+        NSRect frame = [NSWindow frameRectForContentRect:content styleMask:targetStyle];
+        // Wine publishes this frame when leaving a Space. Preserve the game's
+        // windowed request instead of sending its old fullscreen dimensions back.
+        memcpy((char *)(__bridge void *)window + ivar_getOffset(savedFrame), &frame, sizeof frame);
+    }
+    if (window.styleMask & NSWindowStyleMaskFullScreen) {
+        IMP toggle = class_getMethodImplementation(NSWindow.class, @selector(toggleFullScreen:));
+        ((void (*)(id, SEL, id))toggle)(window, @selector(toggleFullScreen:), nil);
+    } else restoreWindow(window);
+}
+static void frameFromWine(id window, SEL selector, NSRect frame) {
+    BOOL targetSize = fabs(frame.size.width - npWidth) < 1 && fabs(frame.size.height - npHeight) < 1;
+    if (objc_getAssociatedObject(window, &npManagedWindow) &&
+        (!targetSize || objc_getAssociatedObject(window, &npWindowedStyle) || objc_getAssociatedObject(window, &npLeavingFullscreen))) {
+        objc_setAssociatedObject(window, &npWindowedFrame, [NSValue valueWithRect:frame], OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        leaveFullscreenForGame(window);
+        return;
+    }
+    wineSetFrame(window, selector, frame);
+    if (targetSize && !([window styleMask] & NSWindowStyleMaskTitled) &&
+        !objc_getAssociatedObject(window, &npManagedWindow)) {
+        objc_setAssociatedObject(window, &npAttemptedWindow, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        scheduleWindow(window);
+    }
+}
+static void featuresFromWine(id window, SEL selector, const void *features) {
+    wineSetFeatures(window, selector, features);
+    if (objc_getAssociatedObject(window, &npManagedWindow) && ([window styleMask] & NSWindowStyleMaskTitled)) {
+        NSUInteger style = [window styleMask] & ~(NSWindowStyleMaskFullScreen | NSWindowStyleMaskFullSizeContentView);
+        NSDictionary *original = objc_getAssociatedObject(window, &npOriginalWindow);
+        style |= [original[@"style"] unsignedIntegerValue] & NSWindowStyleMaskFullSizeContentView;
+        objc_setAssociatedObject(window, &npWindowedStyle, @(style), OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
+}
 static void (*wineWindowDrawn)(id, SEL);
 static void windowDrawn(id window, SEL selector) {
     wineWindowDrawn(window, selector);
     scheduleWindow(window);
 }
 static void watchRendering(NSWindow *window) {
+    if (!wineSetFrame && class_getInstanceMethod(window.class, NSSelectorFromString(@"setFrameFromWine:")))
+        replaceMethod(window.class, NSSelectorFromString(@"setFrameFromWine:"), (IMP)frameFromWine, &wineSetFrame);
+    if (!wineSetFeatures && class_getInstanceMethod(window.class, NSSelectorFromString(@"setWindowFeatures:")))
+        replaceMethod(window.class, NSSelectorFromString(@"setWindowFeatures:"), (IMP)featuresFromWine, &wineSetFeatures);
     if (wineWindowDrawn) return;
     SEL selector = NSSelectorFromString(@"windowDidDrawContent");
     Method method = class_getInstanceMethod(window.class, selector);
@@ -313,6 +365,17 @@ static void restoreWindow(NSWindow *window) {
     window.contentView.bounds = [state[@"bounds"] rectValue];
     window.contentView.layer.backgroundColor = [state[@"layerBackground"] CGColor];
     objc_setAssociatedObject(window, &npOriginalWindow, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    NSNumber *style = objc_getAssociatedObject(window, &npWindowedStyle);
+    NSValue *frame = objc_getAssociatedObject(window, &npWindowedFrame);
+    objc_setAssociatedObject(window, &npLeavingFullscreen, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    objc_setAssociatedObject(window, &npWindowedStyle, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    objc_setAssociatedObject(window, &npWindowedFrame, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    if (style) window.styleMask = style.unsignedIntegerValue;
+    if (frame && wineSetFrame) dispatch_async(dispatch_get_main_queue(), ^{
+        if (style) window.styleMask = style.unsignedIntegerValue;
+        wineSetFrame(window, NSSelectorFromString(@"setFrameFromWine:"), frame.rectValue);
+        window.contentView.bounds = (NSRect){NSZeroPoint, window.contentView.frame.size};
+    });
 }
 
 static void scaleContent(NSWindow *window) {
@@ -354,7 +417,11 @@ static void considerWindow(NSWindow *window) {
         objc_getAssociatedObject(window, &npAttemptedWindow)) return;
     NSSize size = window.contentView.frame.size;
     watchRendering(window);
-    if (size.width < 64 || size.height < 64 || (window.styleMask & NSWindowStyleMaskUtilityWindow) ||
+    // A renderer is not a fullscreen request. Only adopt a borderless window
+    // that the game has explicitly sized to the selected virtual desktop.
+    if ((window.styleMask & NSWindowStyleMaskTitled) ||
+        size.width < npWidth - 1 || size.height < npHeight - 1 ||
+        (window.styleMask & NSWindowStyleMaskUtilityWindow) ||
         !graphicsSurface(window.contentView)) return;
     NSColor *layerBackground = window.contentView.layer.backgroundColor
         ? [NSColor colorWithCGColor:window.contentView.layer.backgroundColor] : NSColor.clearColor;

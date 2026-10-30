@@ -13,9 +13,15 @@
 @end
 @interface WineWindow : NSPanel
 - (void)windowDidDrawContent;
+- (void)setFrameFromWine:(NSRect)rect;
+- (void)setWindowFeatures:(const NSUInteger *)features;
 @end
 @implementation WineWindow
 - (void)windowDidDrawContent {}
+- (void)setFrameFromWine:(NSRect)rect { [self setContentSize:rect.size]; }
+- (void)setWindowFeatures:(const NSUInteger *)features {
+    self.styleMask = *features | (self.styleMask & NSWindowStyleMaskFullScreen);
+}
 @end
 __attribute__((noinline, disable_tail_calls)) static CGPoint rawLocation(CGEventRef event) { return CGEventGetLocation(event); }
 static BOOL black(NSColor *color) {
@@ -37,6 +43,8 @@ int main(int argc, const char **argv) {
         unsigned targetWidth = 1920, targetHeight = 1080;
         np_display_parse(getenv("NOTPROTON_DISPLAY_RESOLUTION"), &targetWidth, &targetHeight);
         BOOL exitSpace = getenv("NP_DISPLAY_TEST_EXIT") != NULL;
+        BOOL gameWindowed = getenv("NP_DISPLAY_TEST_GAME_WINDOWED") != NULL;
+        BOOL stayWindowed = getenv("NP_DISPLAY_TEST_STAY_WINDOWED") != NULL;
         __block BOOL dialogUnchanged = NO, dialogClickable = NO;
         __block NSWindowStyleMask originalStyle = 0;
         void (^report)(NSWindow *) = ^(NSWindow *window) {
@@ -59,6 +67,9 @@ int main(int argc, const char **argv) {
                 @"backgroundBlack": @(black(window.backgroundColor)), @"canvasBlack": @(black(canvasColor)),
                 @"input": input, @"dialogClickable": @(dialogClickable), @"fullscreenInput": @(fullscreenInput),
                 @"dialogUnchanged": @(dialogUnchanged), @"styleRestored": @(window.styleMask == originalStyle),
+                @"gameWindowed": @(!(window.styleMask & NSWindowStyleMaskFullScreen) &&
+                    (window.styleMask & NSWindowStyleMaskTitled) &&
+                    fabs(window.contentView.frame.size.width-800)<1 && fabs(window.contentView.bounds.size.width-800)<1),
                 @"separatorHidden": @(window.titlebarSeparatorStyle == NSTitlebarSeparatorStyleNone),
                 @"titleHidden": @(window.titleVisibility == NSWindowTitleHidden),
                 @"category": [NSBundle.mainBundle objectForInfoDictionaryKey:@"LSApplicationCategoryType"] ?: @""};
@@ -74,7 +85,11 @@ int main(int argc, const char **argv) {
                 dispatch_after(dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC / 2), dispatch_get_main_queue(), ^{
                     // Reproduce Wine's late checkTransparency repaint of native chrome.
                     [note.object setBackgroundColor:NSColor.whiteColor];
-                    if (exitSpace) {
+                    if (gameWindowed) {
+                        NSUInteger style = NSWindowStyleMaskTitled | NSWindowStyleMaskResizable;
+                        [(WineWindow *)note.object setWindowFeatures:&style];
+                        [(WineWindow *)note.object setFrameFromWine:NSMakeRect(100,100,800,600)];
+                    } else if (exitSpace) {
                         IMP toggle = class_getMethodImplementation(NSWindow.class, @selector(toggleFullScreen:));
                         ((void (*)(id, SEL, id))toggle)(note.object, @selector(toggleFullScreen:), nil);
                     } else { report(note.object); [app terminate:nil]; }
@@ -82,7 +97,7 @@ int main(int argc, const char **argv) {
             }];
         [[NSNotificationCenter defaultCenter] addObserverForName:NSWindowDidExitFullScreenNotification object:nil
             queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *note) {
-                if (!exitSpace) return;
+                if (!exitSpace && !gameWindowed) return;
                 dispatch_after(dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC / 4), dispatch_get_main_queue(), ^{
                     report(note.object); [app terminate:nil];
                 });
@@ -118,6 +133,13 @@ int main(int argc, const char **argv) {
                     layer.drawableSize = CGSizeMake(1920,1080);render.wantsLayer=YES;render.layer=layer;
                     [window.contentView addSubview:render];[window.contentView setNeedsDisplay:YES];
                     [window windowDidDrawContent];
+                    if (stayWindowed) {
+                        dispatch_after(dispatch_time(DISPATCH_TIME_NOW,NSEC_PER_SEC),dispatch_get_main_queue(),^{report(window);[app terminate:nil];});
+                    } else {
+                        window.styleMask = NSWindowStyleMaskBorderless;
+                        [window setFrameFromWine:NSMakeRect(0,0,targetWidth,targetHeight)];
+                        originalStyle = window.styleMask;
+                    }
                 });
             });
         });

@@ -5,6 +5,7 @@
 #include <GL/gl.h>
 static HDC gameDC;
 static HGLRC gameGL;
+static int windowed;
 static DWORD WINAPI dismiss_warning(void *unused) {
     (void)unused;
     for (int i=0;i<100;i++) {
@@ -38,7 +39,15 @@ static LRESULT CALLBACK procedure(HWND window, UINT message, WPARAM wp, LPARAM l
     }
     if (message == WM_TIMER) {
         RECT rect; GetClientRect(window,&rect);
-        printf("desktop=%dx%d client=%ldx%ld\n",GetSystemMetrics(SM_CXSCREEN),GetSystemMetrics(SM_CYSCREEN),rect.right,rect.bottom);
+        if (!windowed) {
+            printf("desktop=%dx%d client=%ldx%ld\n",GetSystemMetrics(SM_CXSCREEN),GetSystemMetrics(SM_CYSCREEN),rect.right,rect.bottom);
+            fflush(stdout);windowed=1;
+            SetWindowLongPtrA(window,GWL_STYLE,WS_OVERLAPPEDWINDOW|WS_VISIBLE);
+            RECT frame={0,0,800,600};AdjustWindowRect(&frame,WS_OVERLAPPEDWINDOW,FALSE);
+            SetWindowPos(window,NULL,100,100,frame.right-frame.left,frame.bottom-frame.top,SWP_FRAMECHANGED|SWP_NOZORDER);
+            SetTimer(window,1,2000,NULL);return 0;
+        }
+        printf("windowedClient=%ldx%ld\n",rect.right,rect.bottom);
         fflush(stdout);DestroyWindow(window);return 0;
     }
     if (message == WM_DESTROY) { PostQuitMessage(0);return 0; }
@@ -63,6 +72,8 @@ int main(int argc, char **argv) {
     pfd.iPixelType=PFD_TYPE_RGBA;pfd.cColorBits=24;pfd.cDepthBits=24;
     int format=ChoosePixelFormat(gameDC,&pfd);
     if (!format||!SetPixelFormat(gameDC,format,&pfd)||(gameGL=wglCreateContext(gameDC))==NULL||!wglMakeCurrent(gameDC,gameGL))return 4;
+    SetWindowLongPtrA(window,GWL_STYLE,WS_POPUP|WS_VISIBLE);
+    SetWindowPos(window,NULL,0,0,GetSystemMetrics(SM_CXSCREEN),GetSystemMetrics(SM_CYSCREEN),SWP_FRAMECHANGED|SWP_NOZORDER);
     SetTimer(window,1,8000,NULL);SetTimer(window,2,30,NULL);
     MSG msg;while(GetMessageA(&msg,NULL,0,0)>0){TranslateMessage(&msg);DispatchMessageA(&msg);}return 0;
 }

@@ -9,7 +9,7 @@
     "  const doc=root.ownerDocument,el=(tag,cls,text)=>{const n=doc.createElement(tag);if(cls)n.className=cls;if(text)n.textContent=text;return n};" \
     "  const row=el('div','MSCXDisplayControls'),select=el('select','MSCXDisplaySelect'),size=el('div','MSCXDisplaySize')," \
     "   width=el('input','MSCXDisplayNumber'),height=el('input','MSCXDisplayNumber'),apply=el('button','MSCXBtn')," \
-    "   hint=el('div','MSCXDisplayHint','Runs on the main display in a macOS fullscreen Space at the selected resolution. Your Mac’s display settings stay unchanged.')," \
+    "   hint=el('div','MSCXDisplayHint','Sets the game’s virtual desktop resolution. Fullscreen follows the game’s display mode; windowed mode stays available. Your Mac’s display settings stay unchanged.')," \
     "   status=el('div','MSCXDisplayHint'),retry=el('button','MSCXBtn','Retry');" \
     "  select.setAttribute('aria-label','Fullscreen resolution');status.setAttribute('role','status');" \
     "  const common=[[1280,720],[1280,800],[1440,900],[1600,900],[1680,1050],[1920,1080],[1920,1200],[2560,1440],[2560,1600],[3440,1440],[3840,2160],[3840,2400]];" \
