@@ -40,7 +40,7 @@
     " return np=>{" \
     "  const panel=base(np);if(!panel)return null;" \
     "  const section=react().jsx(ui().XY,{label:'Environment variables',children:[" \
-    "   react().jsx('style',{children:'.MSCXEnvField{box-sizing:border-box;display:block;width:100%;min-width:0;min-height:132px;resize:vertical;padding:10px;color:#dfe3e6;background:rgba(13,15,18,.72);border:1px solid rgba(130,140,150,.35);border-radius:3px;font:12px/1.5 monospace;white-space:pre}.MSCXEnvField:focus{outline:1px solid #66c0f4}.MSCXEnvField:disabled{opacity:.6}.MSCXEnvHint{margin:6px 0;color:#a7adb4;font-size:12px;line-height:1.4}'})," \
+    "   react().jsx('style',{children:'.MSCXEnvField{box-sizing:border-box;display:block;width:100%;min-width:0;min-height:132px;resize:vertical;padding:10px;color:#dfe3e6;background:rgba(13,15,18,.72);border:1px solid rgba(130,140,150,.35);border-radius:3px;font:12px/1.5 monospace;white-space:pre}.MSCXEnvField:focus{outline:1px solid #66c0f4;outline-offset:-1px;border-color:#66c0f4}.MSCXEnvField:disabled{opacity:.6}.MSCXEnvHint{margin:6px 0;color:#a7adb4;font-size:12px;line-height:1.4}'})," \
     "   react().jsx('div',{className:'MSCXEnvEditor',ref:e=>e&&attach(e,np.details.unAppID)},'env-'+np.details.unAppID)" \
     "  ]},'env');" \
     "  return react().jsx('div',{className:'MSCXPanel',children:react().jsxs(react().Fragment,{children:panel.props.children.props.children.concat([section])})});" \
