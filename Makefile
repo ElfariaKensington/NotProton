@@ -453,6 +453,7 @@ panel-behavior:
 	node $(PANEL_TESTS)/localization.js $(OUT_DIR)/panel-emit && \
 	node $(PANEL_TESTS)/fex.js $(OUT_DIR)/panel-emit && \
 	node $(PANEL_TESTS)/prefix-row.js $(OUT_DIR)/panel-emit && \
+	node $(PANEL_TESTS)/display.js $(OUT_DIR)/panel-emit && \
 	node $(PANEL_TESTS)/defaults.js $(OUT_DIR)/panel-emit && \
 	echo "==> panel behavior: renders as expected, no stale arguments"
 
@@ -584,9 +585,25 @@ $(APPINFO): helpers/appinfo.swift
 	swiftc -O -target $(ARCH)-apple-macos$(MIN_VER) -o $@ $<
 	@echo "==> Built $@"
 
-helpers-install: $(ICONMAKER) $(APPINFO)
+GAME_DISPLAY := $(OUT_DIR)/game-display.dylib
+.PHONY: game-display display-check
+display-check: game-display
+	python3 dylib/tests/display-launch-check.py
+	python3 dylib/tests/display-check.py
+
+game-display: $(GAME_DISPLAY)
+
+$(GAME_DISPLAY): helpers/game-display.m dylib/feats/displayconfig.h
+	@mkdir -p $(OUT_DIR)
+	$(CC) -arch arm64 -arch x86_64 -mmacosx-version-min=$(MIN_VER) $(AVAIL) \
+		-fobjc-arc -O2 -Wall -Wextra -framework AppKit -framework CoreGraphics \
+		-dynamiclib -install_name @rpath/game-display.dylib -o $@ $<
+	codesign --force --sign - $@
+
+helpers-install: $(ICONMAKER) $(APPINFO) $(GAME_DISPLAY)
 	$(call install_atomically,$(ICONMAKER),$(SUPPORT_DIR)/iconmaker)
 	$(call install_atomically,$(APPINFO),$(SUPPORT_DIR)/appinfo)
+	$(call install_atomically,$(GAME_DISPLAY),$(SUPPORT_DIR)/bridge/game-display.dylib)
 	@echo "==> Installed: $(SUPPORT_DIR)/{iconmaker,appinfo}"
 
 dobby:
@@ -658,13 +675,14 @@ bridge:
 fonts:
 	fonts/build.sh
 
-app-payload: $(TARGET) $(OVERLAY_SHIM) $(ICONMAKER) $(APPINFO)
+app-payload: $(TARGET) $(OVERLAY_SHIM) $(ICONMAKER) $(APPINFO) $(GAME_DISPLAY)
 	@mkdir -p "$(APP_PAYLOAD)/signatures/macos.arm64"
 	@mkdir -p "$(APP_PAYLOAD)/bridge"
 	cp -f $(TARGET) "$(APP_PAYLOAD)/notproton.dylib"
 	cp -f $(OVERLAY_SHIM) "$(APP_PAYLOAD)/overlay-shim.dylib"
 	cp -f $(ICONMAKER) "$(APP_PAYLOAD)/iconmaker"
 	cp -f $(APPINFO) "$(APP_PAYLOAD)/appinfo"
+	cp -f $(GAME_DISPLAY) "$(APP_PAYLOAD)/bridge/"
 	cp -f dylib/feats/compat_run.sh "$(APP_PAYLOAD)/run"
 	cp -f signatures/macos.arm64/*.json "$(APP_PAYLOAD)/signatures/macos.arm64/"
 	@set -e; for spec in $(BRIDGE_FILES); do \

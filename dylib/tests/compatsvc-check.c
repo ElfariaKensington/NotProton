@@ -983,6 +983,40 @@ static void rebuild_route_cases(void) {
     if (system(cmd) != 0) fprintf(stderr, "could not remove %s\n", scratch);
 }
 
+static void display_route_cases(void) {
+    char root[] = "/tmp/notproton-display.XXXXXX";
+    check(mkdtemp(root) != NULL, "display fixture exists");
+    snprintf(stub_state.compatdata, sizeof stub_state.compatdata, "%s/steamapps/compatdata/480", root);
+    uintptr_t response = (uintptr_t)response_buf;
+    check(get_display(build_request(REQ_HAS_APPID, 480), response) == RESULT_OK,
+          "unset resolution can be read before first launch");
+    check(set_display(build_specify_request(SPECIFY_HAS_APPID, 480, "1920x1080"), response) == RESULT_OK,
+          "resolution saves in the game's prefix root before first launch");
+    check(get_display(build_request(REQ_HAS_APPID, 480), response) == RESULT_OK,
+          "saved resolution reads successfully");
+    char value[32];
+    pb_copy_string(captured_pb, captured_pb_len, RESP_DEFAULT, value, sizeof value);
+    check(strcmp(value, "1920x1080") == 0, "saved dimensions round trip through the actual route");
+    const char *invalid[] = { "1x1", "1920x0", "1920x1080;touch bad", "640x480x2", "999999999999x1080", "1920x1080\nBAD", "1920x1080\r\n" };
+    for (unsigned i = 0; i < sizeof invalid / sizeof invalid[0]; i++)
+        check(set_display(build_specify_request(SPECIFY_HAS_APPID, 480, invalid[i]), response) == RESULT_FAIL,
+              "malformed resolution is refused without replacing the saved setting");
+    check(set_display(build_specify_request(SPECIFY_HAS_APPID, 0, "1920x1080"), response) == RESULT_FAIL,
+          "resolution must belong to a game");
+    check(get_display(build_request(REQ_HAS_APPID, 480), response) == RESULT_OK,
+          "invalid writes preserve the saved resolution");
+    pb_copy_string(captured_pb, captured_pb_len, RESP_DEFAULT, value, sizeof value);
+    check(strcmp(value, "1920x1080") == 0, "failed edits leave the old setting intact");
+    check(set_display(build_specify_request(SPECIFY_HAS_APPID, 480, ""), response) == RESULT_OK,
+          "use game settings removes the override");
+    get_display(build_request(REQ_HAS_APPID, 480), response);
+    pb_copy_string(captured_pb, captured_pb_len, RESP_DEFAULT, value, sizeof value);
+    check(!*value, "cleared display setting reads as disabled");
+    char cmd[PATH_MAX + 16];
+    snprintf(cmd, sizeof cmd, "rm -rf '%s'", root);
+    check(system(cmd) == 0, "display fixture cleaned up");
+}
+
 static void string_field_cases(void) {
     // string_field reads an arena-tagged pointer. Low bit set = arena, cleared before
     // deref. A long string (byte[23] < 0) dereferences the first qword as a pointer to
@@ -1038,6 +1072,7 @@ int main(void) {
     routes_state_cases();
     string_field_cases();
     rebuild_route_cases();
+    display_route_cases();
 
     if (failures) {
         printf("==> compatsvc: %d check(s) failed\n", failures);
