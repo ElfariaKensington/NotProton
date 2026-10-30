@@ -18,7 +18,8 @@ static const np_conf_spec_t kPlugin[] = {
     { "section", 1, 0 },   { "on", 1, 0 },          { "off", 1, 0 },
     { "depends", 1, 0 },   { "requires", 4, 0 },    { "inject", 1, 0 },
     { "env", 16, 0 },      { "overrides", 1, 0 },   { "stage", 1, 0 },
-    { "type", 1, 0 },      { "choice", 16, 0 },     { "min", 1, 0 },
+    { "tools", 8, 0 },     { "type", 1, 0 },        { "choice", 16, 0 },
+    { "min", 1, 0 },
     { "max", 1, 0 },       { "step", 1, 0 },        { "default", 1, 0 },
     { "suffix", 1, 0 },    { NULL, 0, 0 }
 };
@@ -137,6 +138,20 @@ static int conf_choice_has(const np_conf_rec_t *rec, const char *want) {
     return 0;
 }
 
+// A tool name, or one ending in a single "*". Narrow on purpose: the panel matches with
+// startsWith and compat_run.sh with a case pattern, and this is where they still agree.
+static int conf_tool_ok(const char *v) {
+    size_t n = strlen(v);
+    if (!n) return 0;
+    if (v[n - 1] == '*') n--;
+    if (!n) return 0;
+    for (size_t i = 0; i < n; i++)
+        if (!((v[i] >= 'A' && v[i] <= 'Z') || (v[i] >= 'a' && v[i] <= 'z') ||
+              (v[i] >= '0' && v[i] <= '9') || v[i] == '.' || v[i] == '_' || v[i] == '-'))
+            return 0;
+    return 1;
+}
+
 static int conf_env_ok(const char *v) {
     const char *eq = strchr(v, '=');
     if (!eq || eq == v) return 0;
@@ -176,6 +191,10 @@ static const char *conf_schema(const np_conf_rec_t *rec, np_conf_kind kind,
         }
         if (strcmp(n, "choice") == 0 && !np_conf_choice(v, NULL)) {
             *detail = "choice";
+            return NP_CONF_BAD_VALUE;
+        }
+        if (strcmp(n, "tools") == 0 && !conf_tool_ok(v)) {
+            *detail = "tools";
             return NP_CONF_BAD_VALUE;
         }
     }

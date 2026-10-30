@@ -32,7 +32,9 @@ checked against so they cannot drift.
   `NOTPROTON_` followed by one or more of `A-Z 0-9 _`. For a variant it is the name used in
   `NOTPROTON_RUNNER_VARIANT`: `A-Za-z0-9`, then any of `A-Za-z0-9 . _ -`, at most 64 bytes.
   A plugin has no `key` field and a variant's file name means nothing.
-- Fields are `name = value`, split at the first `=`, so a value may contain `=`.
+- Fields are `name = value`, split at the first `=`, so a value may contain `=`. A field
+  that takes more than one value is given more than once rather than separated by
+  commas: one rule for every list, and adding or removing an entry is a one-line diff.
 - Whitespace around a header, inside its brackets, and around a name or a value is
   trimmed. Once trimmed, a value may not contain a tab, which keeps the normalised form
   unambiguous; a tab around the `=` is just whitespace. A `#` as the first non-blank
@@ -78,6 +80,7 @@ in both directories.
 | `env` | append, max 16 | | `NAME=VALUE`, exported for the game; `NAME` is `[A-Z_][A-Z0-9_]*`. A name the launch sets itself is skipped at launch, the same names `NOTPROTON_ENV_` is kept from |
 | `overrides` | once | | appended to `WINEDLLOVERRIDES` |
 | `stage` | once | | a folder whose files are copied into the prefix's `system32` |
+| `tools` | append, max 8 | | a compatibility tool this row is for, as a name or a name ending in one `*`. Naming none means every tool |
 | `type` | once | | `choice` or `slider`; a toggle without one |
 | `choice` | append, max 16 | | `<value> = <label>`, split at the first `=`; the label defaults to the value |
 | `min`, `max` | once | for a range slider | numbers, `max` the larger |

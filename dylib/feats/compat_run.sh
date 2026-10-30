@@ -144,6 +144,8 @@ np_flavor=""
 np_build=""
 CDPATH=''
 np_tool_dir=$(cd -- "$(dirname -- "$0")" 2>/dev/null && pwd) || np_tool_dir=""
+# The folder's name is the tool's name, which is what a plugin's "tools" is matched against.
+np_tool_name=$(basename -- "${np_tool_dir:-.}")
 if [ -n "$np_tool_dir" ] && [ -r "$np_tool_dir/flavor" ]; then
   read -r np_flavor < "$np_tool_dir/flavor" || np_flavor=""
 fi
@@ -210,6 +212,7 @@ NP_CONF_NAMES
     eq = index(s, "=")
     return eq ? trim(substr(s, 1, eq - 1)) : s
   }
+  function toolok(s) { sub(/\*$/, "", s); return s ~ /^[A-Za-z0-9._-]+$/ }
   function envok(s,   eq) {
     eq = index(s, "=")
     return eq > 1 && substr(s, 1, eq - 1) ~ /^[A-Z_][A-Z0-9_]*$/
@@ -227,6 +230,7 @@ NP_CONF_NAMES
     for (i = 1; i <= nkv; i++) {
       if (names[i] == "env" && !envok(vals[i])) { detail = "env"; return "bad-value" }
       if (names[i] == "choice" && choiceval(vals[i]) == "") { detail = "choice"; return "bad-value" }
+      if (names[i] == "tools" && !toolok(vals[i])) { detail = "tools"; return "bad-value" }
     }
     if (("depends" in cnt) && !idok(first["depends"])) { detail = "depends"; return "bad-value" }
     if (("section" in cnt) && first["section"] != "dev") { detail = "section"; return "bad-value" }
@@ -282,8 +286,8 @@ NP_CONF_NAMES
   BEGIN {
     nkv = 0; records = 0; id = ""; code = ""; detail = ""
     if (kind == "plugin") {
-      split("label description description_on section on off depends requires inject env overrides stage type choice min max step default suffix", f, " ")
-      split("1 1 16 1 1 1 1 4 1 16 1 1 1 16 1 1 1 1 1", m, " ")
+      split("label description description_on section on off depends requires inject env overrides stage tools type choice min max step default suffix", f, " ")
+      split("1 1 16 1 1 1 1 4 1 16 1 1 8 1 16 1 1 1 1 1", m, " ")
       split("label", req, " "); nreq = 1
     } else {
       split("label variant src dst", f, " ")
@@ -663,6 +667,38 @@ np_variant_resolve() {
     return 0
   fi
   return 1
+}
+
+# A variant can bring a module name the base runner never had. Prefixes are copied from a
+# template built before the variant existed, so that name has no entry in system32 and the
+# loader will not reach the runner's copy: a forward into it fails with "module not found"
+# and the first real call aborts the game. Putting the file in the prefix registers the
+# name. A name the prefix already has resolves on its own and is left as it is, which is
+# every DLL a variant merely replaces.
+np_variant_stage_prefix() {
+  [ -n "$np_variant_used" ] || return 0
+  for np_v_name in $np_variant_used; do
+    np_variant_read "$np_v_name" || continue
+    for np_v_from in "$np_v_src"/*-windows/*.dll; do
+      [ -f "$np_v_from" ] || continue
+      np_v_rel=${np_v_from#"$np_v_src"/}
+      case "$np_v_rel" in
+        (i386-windows/*) np_v_into="$WINEPREFIX/drive_c/windows/syswow64" ;;
+        (*) np_v_into="$WINEPREFIX/drive_c/windows/system32" ;;
+      esac
+      # Copy what the runner ended up with, not the tree it was built from, and skip an
+      # architecture this runner has no slot for -- the same rule the overlay applies.
+      np_v_live="$CX_ROOT/$np_v_dst/$np_v_rel"
+      [ -f "$np_v_live" ] && [ -d "$np_v_into" ] || continue
+      np_v_reg="$np_v_into/${np_v_rel##*/}"
+      [ ! -e "$np_v_reg" ] || continue
+      if cp -f "$np_v_live" "$np_v_reg"; then
+        np_variant_say "$np_v_name: registered ${np_v_rel##*/} in ${np_v_into##*/}"
+      else
+        np_variant_say "$np_v_name: could not register ${np_v_rel##*/} in ${np_v_into##*/}"
+      fi
+    done
+  done
 }
 
 CX_ROOT="$np_support/runners/crossover-$np_build/CrossOver"
@@ -1967,6 +2003,8 @@ if [ -n "$STEAM_COMPAT_DATA_PATH" ]; then
   without_lock_fds "$WINESERVER" -k >> "$log" 2>&1 || true
   stage_step="prefix seed"
   seed_prefix_from_template
+  stage_step="variant modules"
+  np_variant_stage_prefix
   stage_step="profile layout"
   if ! lay_out_proton_profile; then
     show_alert "Saved-game folders need attention" "NotProton left the conflicting files in place. Open this prefix's notproton-run.log for details before trying again."
@@ -2440,10 +2478,28 @@ np_feat_switched() {
   np_feat_son=$(np_feat_first "$1" on)
   [ "$np_feat_sv" = "${np_feat_son:-1}" ]
 }
+# A plugin may name the tools it is for, as a name or a name ending in "*". Naming none
+# means every tool, which is what nearly all of them want.
+np_feat_for_tool() {
+  np_feat_tl=$(np_conf_values "$np_conf_feat_table" "$1" tools)
+  [ -n "$np_feat_tl" ] || return 0
+  while IFS= read -r np_feat_pat; do
+    [ -n "$np_feat_pat" ] || continue
+    # shellcheck disable=SC2254 # the pattern is a glob on purpose, and conf.c keeps it to one *
+    case "$np_tool_name" in
+      ($np_feat_pat) return 0 ;;
+    esac
+  done <<NP_FEAT_TOOLS
+$np_feat_tl
+NP_FEAT_TOOLS
+  return 1
+}
+
 # A row is on only if everything it hangs off is, so a sub-option cannot outlive its parent.
 np_feat_active() {
   [ "$2" -le 32 ] || return 1
   np_conf_has "$np_conf_feat_table" "$1" || return 1
+  np_feat_for_tool "$1" || return 1
   np_feat_switched "$1" || return 1
   np_feat_installed "$1" || return 1
   np_feat_adep=$(np_feat_first "$1" depends)

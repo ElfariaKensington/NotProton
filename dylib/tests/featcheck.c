@@ -354,6 +354,22 @@ int main(void) {
     write_desc("10-dep.conf", "[NOTPROTON_DEP]\nlabel = Dep\ndepends = == x.conf\n");
     ok(strcmp(feats_json(), "[]") == 0, "a depends that is not a plugin id is refused");
 
+    puts("== the tools a plugin is for");
+    clear_descs();
+    write_desc("10-tl.conf",
+               "[NOTPROTON_PICKY]\nlabel = Picky\nsection = dev\n"
+               "tools = notproton-fex*\ntools = notproton-26.3\n");
+    ok(strstr(feats_json(), ",tl:[\"notproton-fex*\",\"notproton-26.3\"]") != NULL,
+       "each one is carried, in the order it was read");
+    clear_descs();
+    write_desc("10-tl.conf", "[NOTPROTON_ALL]\nlabel = All\nsection = dev\n");
+    ok(strstr(feats_json(), "tl:") == NULL, "naming none carries none, which means all");
+    clear_descs();
+    write_desc("10-star.conf", "[NOTPROTON_STAR]\nlabel = Star\nsection = dev\n"
+                               "tools = not*proton\n");
+    ok(strcmp(feats_json(), "[]") == 0,
+       "a star anywhere but the end is refused, since the two readers would disagree");
+
     puts("== a row with no type, or one that does not exist");
     clear_descs();
     write_desc("10-t.conf", "[NOTPROTON_T]\nlabel = T\nsection = dev\n");

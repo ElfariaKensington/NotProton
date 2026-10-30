@@ -57,6 +57,13 @@ NOTPROTON_SPACED	env	PATH_LIKE=a=b=c
 
 # A field before the first header drops the file, so the good record after it is lost
 # too: there is no way to know which record the stray line was meant for.
+== plugins/36-tools.conf
+NOTPROTON_PICKY	label	Picky
+NOTPROTON_PICKY	tools	notproton-fex*
+NOTPROTON_PICKY	tools	notproton-26.3
+
+# A "*" anywhere but the end would mean one thing to the panel's startsWith and another
+# to the run script's case pattern, so it is refused rather than left to disagree.
 == plugins/40-no-header.conf
 !	plugins/40-no-header.conf	no-header
 
@@ -83,6 +90,7 @@ NOTPROTON_AFTER_EMPTY	label	After
 !	NOTPROTON_NOLABEL	missing-required:label
 !	NOTPROTON_BADENV	bad-value:env
 !	NOTPROTON_TABBED	tab-in-value:description
+!	NOTPROTON_BADTOOL	bad-value:tools
 
 == plugins/75-value-faults.conf
 !	NOTPROTON_BAD_DEPENDS	bad-value:depends
