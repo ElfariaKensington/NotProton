@@ -203,7 +203,7 @@ webui-check:
 compatsvc-check: webui-check
 	@if [ ! -f dylib/tests/compatsvc-check.c ]; then $(call SKIP,compatsvc-check,dylib/tests/compatsvc-check.c); exit 0; fi; \
 	mkdir -p $(OUT_DIR) && \
-	$(TEST_CC) -o $(COMPATSVC_CHECK) dylib/tests/compatsvc-check.c && \
+	$(TEST_CC) -o $(COMPATSVC_CHECK) dylib/tests/compatsvc-check.c $(FRAMEWORKS) && \
 	$(COMPATSVC_CHECK)
 
 DEFAULTS_CHECK := $(OUT_DIR)/defaults-check
@@ -603,7 +603,7 @@ game-display: $(GAME_DISPLAY)
 $(GAME_DISPLAY): helpers/game-display.m dylib/feats/displayconfig.h
 	@mkdir -p $(OUT_DIR)
 	$(CC) -arch arm64 -arch x86_64 -mmacosx-version-min=$(MIN_VER) $(AVAIL) \
-		-fobjc-arc -O2 -Wall -Wextra -framework AppKit -framework CoreGraphics \
+		-fobjc-arc -O2 -Wall -Wextra -framework AppKit -framework CoreGraphics -framework QuartzCore \
 		-dynamiclib -install_name @rpath/game-display.dylib -o $@ $<
 	codesign --force --sign - $@
 

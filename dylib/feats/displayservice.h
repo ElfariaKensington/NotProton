@@ -2,6 +2,7 @@
 #ifndef NOTPROTON_DISPLAYSERVICE_H
 #define NOTPROTON_DISPLAYSERVICE_H
 #include "displayconfig.h"
+#include <CoreGraphics/CoreGraphics.h>
 
 static int display_path(uint32_t appid, char *dir, char *path) {
     np_prefix_state_t st;
@@ -29,6 +30,74 @@ static int get_display(uintptr_t request, uintptr_t response) {
         snprintf(text, sizeof text, "%ux%u", w, h);
     } else if (errno != ENOENT) return RESULT_FAIL;
     return answer_json(response, appid, text);
+}
+
+// Include both HiDPI logical sizes and physical pixel sizes shown by macOS.
+#define DISPLAY_MODE_MAX 256
+typedef struct { unsigned width, height; } display_size_t;
+static void display_add_size(display_size_t *sizes, size_t *count, size_t w, size_t h) {
+    if (w < NP_DISPLAY_MIN_WIDTH || h < NP_DISPLAY_MIN_HEIGHT ||
+        w > NP_DISPLAY_MAX || h > NP_DISPLAY_MAX) return;
+    for (size_t i = 0; i < *count; i++)
+        if (sizes[i].width == w && sizes[i].height == h) return;
+    if (*count < DISPLAY_MODE_MAX) sizes[(*count)++] = (display_size_t){ (unsigned)w, (unsigned)h };
+}
+static int display_size_compare(const void *a, const void *b) {
+    const display_size_t *x = a, *y = b;
+    unsigned xa = x->width * x->height, ya = y->width * y->height;
+    if (xa != ya) return xa > ya ? -1 : 1;
+    return x->width > y->width ? -1 : x->width < y->width ? 1 : 0;
+}
+static int get_display_modes(uintptr_t request, uintptr_t response) {
+    (void)request;
+    CGDirectDisplayID display = CGMainDisplayID();
+    display_size_t sizes[DISPLAY_MODE_MAX];
+    size_t count = 0;
+    unsigned current_w = 0, current_h = 0, native_w = 0, native_h = 0;
+    CGDisplayModeRef current = CGDisplayCopyDisplayMode(display);
+    if (current) {
+        current_w = (unsigned)CGDisplayModeGetWidth(current);
+        current_h = (unsigned)CGDisplayModeGetHeight(current);
+        native_w = (unsigned)CGDisplayModeGetPixelWidth(current);
+        native_h = (unsigned)CGDisplayModeGetPixelHeight(current);
+        display_add_size(sizes, &count, current_w, current_h);
+        display_add_size(sizes, &count, native_w, native_h);
+        CGDisplayModeRelease(current);
+    }
+    const void *key = kCGDisplayShowDuplicateLowResolutionModes, *value = kCFBooleanTrue;
+    CFDictionaryRef options = CFDictionaryCreate(NULL, &key, &value, 1,
+        &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+    CFArrayRef modes = CGDisplayCopyAllDisplayModes(display, options);
+    if (options) CFRelease(options);
+    if (modes) {
+        for (CFIndex i = 0; i < CFArrayGetCount(modes); i++) {
+            CGDisplayModeRef mode = (CGDisplayModeRef)CFArrayGetValueAtIndex(modes, i);
+            display_add_size(sizes, &count, CGDisplayModeGetWidth(mode), CGDisplayModeGetHeight(mode));
+            display_add_size(sizes, &count, CGDisplayModeGetPixelWidth(mode), CGDisplayModeGetPixelHeight(mode));
+        }
+        CFRelease(modes);
+    }
+    qsort(sizes, count, sizeof sizes[0], display_size_compare);
+    char json[DISPLAY_MODE_MAX * 32 + 128];
+    int n = snprintf(json, sizeof json, "{\"current\":[%u,%u],\"pixels\":[%u,%u],\"modes\":[",
+                     current_w, current_h, native_w, native_h);
+    if (n < 0 || (size_t)n >= sizeof json) return RESULT_FAIL;
+    size_t used = (size_t)n;
+    for (size_t i = 0; i < count; i++) {
+        n = snprintf(json + used, sizeof json - used, "%s[%u,%u]", i ? "," : "", sizes[i].width, sizes[i].height);
+        if (n < 0 || (size_t)n >= sizeof json - used) return RESULT_FAIL;
+        used += (size_t)n;
+    }
+    if (sizeof json - used < 3) return RESULT_FAIL;
+    memcpy(json + used, "]}", 3);
+    size_t cap = used + 2 + 8;
+    uint8_t *body = malloc(cap);
+    if (!body) return RESULT_FAIL;
+    np_pb_t pb = { body, cap, 0, 1 };
+    pb_string(&pb, RESP_DEFAULT, json);
+    int ok = pb.ok && np_webui_parse_into(response, body, (uint32_t)pb.len);
+    free(body);
+    return ok ? RESULT_OK : RESULT_FAIL;
 }
 
 static int display_mkdir(const char *dir) {

@@ -14,7 +14,7 @@ class Element {
   const writes = [], reads = [];
   let stored = '1920x1080', failLoad = false, failSave = false;
   const globals = { document: { documentElement: { lang: 'en' } },
-   MSCXRoute: async (route,id) => { reads.push({route,id});if(failLoad)throw Error('offline');return stored },
+   MSCXRoute: async (route,id) => { reads.push({route,id});if(failLoad)throw Error('offline');return route==='NotProton.GetDisplayModes#1'?JSON.stringify({current:[2056,1329],pixels:[4112,2658],modes:[[2056,1329],[2560,1600],[4112,2658]]}):stored },
    MSCXSpecifyRoute: async (route,id,text) => { writes.push({route,id,text});if(!failSave)stored=text;return {GetEResult:()=>failSave?2:1} }
   };
   const p = panel(process.argv[2], form, globals);
@@ -30,7 +30,10 @@ class Element {
   }
   let e=mount(480);assert(e.select.disabled);await settle();
   assert.equal(e.select.value,'1920x1080');assert(e.apply.disabled);
-  e.ref(e.root);await settle();assert.equal(reads.length,1);
+  e.ref(e.root);await settle();assert.equal(reads.length,2);
+  const options=e.select.children.flatMap(n=>n.tag==='optgroup'?n.children:[n]);
+  assert(options.some(n=>n.value==='2056x1329'));assert(options.some(n=>n.value==='4112x2658'));
+  assert.equal(options.filter(n=>n.value==='2560x1600').length,1,'system and common modes deduplicate');
   e.select.value='custom';e.select.onchange();e.width.value='2560';e.height.value='1440';e.width.oninput();
   assert.equal(e.size.hidden,false);e.apply.onclick();await settle();
   assert.equal(stored,'2560x1440');assert.equal(writes.at(-1).route,'NotProton.SetDisplay#1');

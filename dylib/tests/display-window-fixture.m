@@ -1,12 +1,18 @@
 #import <AppKit/AppKit.h>
 #import <CoreGraphics/CoreGraphics.h>
+#import <QuartzCore/QuartzCore.h>
+#import <Metal/Metal.h>
 #include <dlfcn.h>
+#import <objc/runtime.h>
 
 @interface WineWindow : NSPanel
 @end
 @implementation WineWindow
 @end
-
+static BOOL black(NSColor *color) {
+    NSColor *rgb = [color colorUsingColorSpace:NSColorSpace.sRGBColorSpace];
+    return rgb && rgb.redComponent < .01 && rgb.greenComponent < .01 && rgb.blueComponent < .01 && rgb.alphaComponent > .99;
+}
 int main(int argc, const char **argv) {
     @autoreleasepool {
         void *driver = dlopen(getenv("NP_DISPLAY_TEST_DRIVER"), RTLD_NOW);
@@ -18,44 +24,77 @@ int main(int argc, const char **argv) {
         CGRect original = CGDisplayBounds(display);
         NSDictionary *virtual = probe();
         BOOL fullscreen = argc > 1 && strcmp(argv[1], "--window") == 0;
+        BOOL exitSpace = getenv("NP_DISPLAY_TEST_EXIT") != NULL;
+        __block BOOL dialogUnchanged = NO;
+        __block NSWindowStyleMask originalStyle = 0;
         void (^report)(NSWindow *) = ^(NSWindow *window) {
             CGRect actual = CGDisplayBounds(display);
             NSRect frame = window ? window.frame : NSZeroRect;
             NSRect canvas = window ? window.contentView.bounds : NSZeroRect;
-            NSDictionary *state = @{@"virtual": virtual, @"physicalWidth": @(actual.size.width),
+            NSColor *canvasColor = window.contentView.layer.backgroundColor ? [NSColor colorWithCGColor:window.contentView.layer.backgroundColor] : nil;
+            NSDictionary *state = @{@"virtual": virtual, @"policy": @(app.activationPolicy), @"physicalWidth": @(actual.size.width),
                 @"physicalHeight": @(actual.size.height), @"physicalUnchanged": @(CGRectEqualToRect(original, actual)),
                 @"fullscreen": @((window.styleMask & NSWindowStyleMaskFullScreen) != 0),
                 @"windowWidth": @(frame.size.width), @"windowHeight": @(frame.size.height),
                 @"canvasWidth": @(canvas.size.width), @"canvasHeight": @(canvas.size.height),
+                @"backgroundBlack": @(black(window.backgroundColor)), @"canvasBlack": @(black(canvasColor)),
+                @"dialogUnchanged": @(dialogUnchanged), @"styleRestored": @(window.styleMask == originalStyle),
+                @"separatorHidden": @(window.titlebarSeparatorStyle == NSTitlebarSeparatorStyleNone),
+                @"titleHidden": @(window.titleVisibility == NSWindowTitleHidden),
                 @"category": [NSBundle.mainBundle objectForInfoDictionaryKey:@"LSApplicationCategoryType"] ?: @""};
             puts([[NSString alloc] initWithData:[NSJSONSerialization dataWithJSONObject:state options:0 error:nil]
                 encoding:NSUTF8StringEncoding].UTF8String);
             fflush(stdout);
         };
         if (!fullscreen) { report(nil); return 0; }
-        // Like Wine, replace an argv slot after dyld constructors have run.
-        // Fullscreen classification must retain the original executable identity.
-        if (argc > 2) argv[2] = NULL;
-        __block WineWindow *window;
+        if (argc > 2) argv[2] = NULL; // Wine rewrites argument slots after constructors.
+        __block WineWindow *window, *dialog;
         [[NSNotificationCenter defaultCenter] addObserverForName:NSWindowDidEnterFullScreenNotification object:nil
             queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *note) {
                 dispatch_after(dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC / 2), dispatch_get_main_queue(), ^{
+                    // Reproduce Wine's late checkTransparency repaint of native chrome.
+                    [note.object setBackgroundColor:NSColor.whiteColor];
+                    if (exitSpace) {
+                        IMP toggle = class_getMethodImplementation(NSWindow.class, @selector(toggleFullScreen:));
+                        ((void (*)(id, SEL, id))toggle)(note.object, @selector(toggleFullScreen:), nil);
+                    } else { report(note.object); [app terminate:nil]; }
+                });
+            }];
+        [[NSNotificationCenter defaultCenter] addObserverForName:NSWindowDidExitFullScreenNotification object:nil
+            queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *note) {
+                if (!exitSpace) return;
+                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC / 4), dispatch_get_main_queue(), ^{
                     report(note.object); [app terminate:nil];
                 });
             }];
         dispatch_async(dispatch_get_main_queue(), ^{
-            window = [[WineWindow alloc] initWithContentRect:NSMakeRect(100, 100, 800, 600)
-                styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskResizable
-                backing:NSBackingStoreBuffered defer:NO];
-            window.releasedWhenClosed = NO;
-            window.title = @"NotProton resolution test";
-            [window makeKeyAndOrderFront:nil];
-            [app activateIgnoringOtherApps:YES];
+            dialog = [[WineWindow alloc] initWithContentRect:NSMakeRect(100,100,640,320)
+                styleMask:NSWindowStyleMaskTitled|NSWindowStyleMaskClosable backing:NSBackingStoreBuffered defer:NO];
+            dialog.releasedWhenClosed = NO;
+            dialog.title = @"Graphics driver warning";
+            NSTextField *text = [NSTextField labelWithString:@"The graphics driver has known issues. Continue?"];
+            text.frame = NSMakeRect(20,200,580,30);[dialog.contentView addSubview:text];
+            NSRect dialogFrame = dialog.frame, dialogBounds = dialog.contentView.bounds;
+            [dialog makeKeyAndOrderFront:nil];[app activateIgnoringOtherApps:YES];
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC / 2), dispatch_get_main_queue(), ^{
+                dialogUnchanged = !(dialog.styleMask & NSWindowStyleMaskFullScreen) &&
+                    NSEqualRects(dialog.frame, dialogFrame) && NSEqualRects(dialog.contentView.bounds, dialogBounds);
+                [dialog close];
+                window = [[WineWindow alloc] initWithContentRect:NSMakeRect(100,100,800,600)
+                    styleMask:NSWindowStyleMaskTitled|NSWindowStyleMaskResizable backing:NSBackingStoreBuffered defer:NO];
+                window.releasedWhenClosed = NO;window.title = @"NotProton rendering test";
+                originalStyle = window.styleMask;
+                [window makeKeyAndOrderFront:nil];
+                // A renderer can appear after the first window/key notification.
+                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC / 4), dispatch_get_main_queue(), ^{
+                    NSView *render = [[NSView alloc] initWithFrame:window.contentView.bounds];
+                    CAMetalLayer *layer = [CAMetalLayer layer];layer.device = MTLCreateSystemDefaultDevice();
+                    layer.drawableSize = CGSizeMake(1920,1080);render.wantsLayer=YES;render.layer=layer;
+                    [window.contentView addSubview:render];[window.contentView setNeedsDisplay:YES];
+                });
+            });
         });
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 12 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
-            report(window); exit(3);
-        });
-        [app run];
-        return 0;
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 14*NSEC_PER_SEC),dispatch_get_main_queue(),^{report(window);exit(3);});
+        [app run];return 0;
     }
 }

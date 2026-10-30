@@ -54,7 +54,7 @@ with tempfile.TemporaryDirectory(prefix='np-display-wine-') as temporary:
             LSApplicationCategoryType='public.app-category.games', NSHighResolutionCapable=True), f)
     executable = root / 'DisplayFixture.exe'
     subprocess.run(['x86_64-w64-mingw32-gcc', '-O2', '-o', str(executable),
-                    str(ROOT / 'dylib/tests/display-wine-fixture.c'), '-luser32', '-lgdi32'], check=True)
+                    str(ROOT / 'dylib/tests/display-wine-fixture.c'), '-luser32', '-lgdi32', '-lopengl32'], check=True)
     env = dict(os.environ, CX_ROOT=str(cx), CX_HOME=str(root / 'cx-home'),
         WINEPREFIX=str(root / 'pfx'), WINEDEBUG='-all', WINEMSYNC='0', WINESERVER=str(server),
         WINELOADER=str(macos / 'wine'), loader_macos=str(macos), loader_root=str(root))
@@ -82,7 +82,9 @@ with tempfile.TemporaryDirectory(prefix='np-display-wine-') as temporary:
     enforced, log = run('1920x1080', window=True)
     assert enforced == ('1920', '1080', '1920', '1080'), (enforced, log[-3000:])
     assert 'entered native fullscreen at 1920x1080' in log, log[-4000:]
-    print('Wine fullscreen desktop and client: 1920x1080; physical display unchanged.', flush=True)
+    dialog=re.search(r'dialog=(\d+)x(\d+)',log)
+    assert dialog and int(dialog[1])<900 and int(dialog[2])<500, 'startup dialog was enlarged: '+log[-4000:]
+    print('Wine graphics window: 1920x1080 fullscreen; startup warning stays windowed; physical display unchanged.', flush=True)
     restored, _ = run('')
     assert restored[:2] == baseline[:2], (baseline, restored)
     print('Disabling enforcement restores the default Wine desktop.', flush=True)

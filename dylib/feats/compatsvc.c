@@ -578,7 +578,8 @@ void np_compatsvc_register(const struct mach_header_64 *mh, intptr_t slide,
         || !np_webui_register_route(ROUTE_OPEN_LOG, request, response, open_prefix_log))
         NP_WARN("compatsvc: the Compatibility page cannot rebuild prefixes");
 
-    if (!np_webui_register_route("NotProton.GetDisplay#1", request, response, get_display)
+    if (!np_webui_register_route("NotProton.GetDisplayModes#1", request, response, get_display_modes)
+        || !np_webui_register_route("NotProton.GetDisplay#1", request, response, get_display)
         || !np_webui_register_route("NotProton.SetDisplay#1", specify_request,
                                     specify_response, set_display))
         NP_WARN("compatsvc: the Compatibility page cannot save display settings");
