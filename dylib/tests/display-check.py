@@ -27,7 +27,7 @@ class DisplayIntegration(unittest.TestCase):
                 CFBundlePackageType='APPL', CFBundleIdentifier='com.notproton.display-test',
                 LSApplicationCategoryType='public.app-category.games', NSHighResolutionCapable=True), f)
         cls.env = dict(os.environ, NP_DISPLAY_TEST_DRIVER=str(cls.root / 'winemac.so'),
-                       DYLD_INSERT_LIBRARIES=str(ROOT / 'out/game-display.dylib'))
+                       DYLD_INSERT_LIBRARIES=os.environ.get('NP_DISPLAY_TEST_HELPER', str(ROOT / 'out/game-display.dylib')))
 
     @classmethod
     def tearDownClass(cls):
@@ -63,8 +63,8 @@ class DisplayIntegration(unittest.TestCase):
 
     def test_native_fullscreen_space_preserves_real_display(self):
         state = self.probe('1920x1080', window=True)
-        self.assertTrue(state['fullscreen'], state)
-        self.assertTrue(state['dialogUnchanged'], state)
+        self.assertTrue(state['fullscreen'] and state['fullscreenInput'], state)
+        self.assertTrue(state['dialogUnchanged'] and state['dialogClickable'], state)
         self.assertTrue(state['backgroundBlack'] and state['canvasBlack'], state)
         self.assertTrue(state['separatorHidden'] and state['titleHidden'], state)
         self.assertTrue(state['physicalUnchanged'], state)
@@ -72,11 +72,16 @@ class DisplayIntegration(unittest.TestCase):
         self.assertGreaterEqual(state['canvasWidth'], 1920)
         self.assertGreaterEqual(state['canvasHeight'], 1080)
 
+    def test_input_at_2560_by_1600(self):
+        state = self.probe('2560x1600', window=True)
+        self.assertTrue(state['fullscreen'] and state['fullscreenInput'], state)
+        self.assertTrue(state['dialogClickable'], state)
+
     def test_exit_restores_window_chrome(self):
         state = self.probe('1920x1080', window=True, exit_space=True)
         self.assertFalse(state['fullscreen'], state)
         self.assertTrue(state['styleRestored'], state)
-        self.assertTrue(state['dialogUnchanged'], state)
+        self.assertTrue(state['dialogUnchanged'] and state['dialogClickable'], state)
 
 if __name__ == '__main__':
     unittest.main()

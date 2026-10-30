@@ -15,6 +15,8 @@ static CGDirectDisplayID npDisplay;
 static CGDisplayModeRef npMode;
 static char npManagedWindow, npAttemptedWindow, npOriginalWindow;
 static void scheduleWindow(NSWindow *window);
+static _Thread_local unsigned npHandlingInput;
+static _Thread_local void *npInputWindow;
 
 static BOOL wineCaller(void *address) {
     if (!npWidth) return NO;
@@ -90,6 +92,7 @@ INTERPOSE(releaseDisplays, CGReleaseAllDisplays);
 
 static NSRect (*screenFrame)(id, SEL), (*screenVisibleFrame)(id, SEL), (*windowFrame)(id, SEL);
 static CGFloat (*screenScale)(id, SEL);
+static CGFloat (*eventDeltaX)(id, SEL), (*eventDeltaY)(id, SEL);
 static void (*windowBackground)(id, SEL, NSColor *);
 static void managedBackground(id window, SEL selector, NSColor *color) {
     if (objc_getAssociatedObject(window, &npManagedWindow) && color.alphaComponent > 0)
@@ -117,7 +120,7 @@ static CGFloat virtualScreenScale(id screen, SEL selector) {
 }
 static NSRect virtualWindowFrame(id window, SEL selector) {
     NSRect frame = windowFrame(window, selector);
-    if (WINE_CALLER() && objc_getAssociatedObject(window, &npManagedWindow) &&
+    if (!npHandlingInput && WINE_CALLER() && objc_getAssociatedObject(window, &npManagedWindow) &&
         ([window styleMask] & NSWindowStyleMaskFullScreen)) frame.size = NSMakeSize(npWidth, npHeight);
     return frame;
 }
@@ -126,6 +129,127 @@ static void replaceMethod(Class cls, SEL selector, IMP replacement, void *previo
     Method method = class_getInstanceMethod(cls, selector);
     *(IMP *)previous = method_getImplementation(method);
     method_setImplementation(method, replacement);
+}
+
+// Wine places windows in Cocoa coordinates using its virtual screen height,
+// but Quartz events arrive in the physical desktop's top-left coordinate space.
+// Keep native hit testing physical and translate only the coordinates sent to Wine.
+static CGFloat physicalScreenTop(void) {
+    return NSMaxY(screenFrame(NSScreen.screens.firstObject, @selector(frame)));
+}
+static BOOL managedFullscreen(NSWindow *window) {
+    return window && objc_getAssociatedObject(window, &npManagedWindow) &&
+        (window.styleMask & NSWindowStyleMaskFullScreen);
+}
+static NSWindow *inputWindow(void) {
+    if (npHandlingInput) return (__bridge NSWindow *)npInputWindow;
+    NSWindow *key = NSApp.keyWindow;
+    return key ?: NSApp.mainWindow;
+}
+static NSPoint wineWindowOrigin(NSWindow *window) {
+    NSRect frame = windowFrame(window, @selector(frame));
+    frame.size = NSMakeSize(npWidth, npHeight);
+    return NSMakePoint(frame.origin.x, npHeight - NSMaxY(frame));
+}
+static CGPoint winePoint(CGPoint physical, NSWindow *window) {
+    if (!managedFullscreen(window)) {
+        physical.y += npHeight - physicalScreenTop();
+        return physical;
+    }
+    NSView *view = window.contentView;
+    NSPoint cocoa = NSMakePoint(physical.x, physicalScreenTop() - physical.y);
+    NSPoint local = [view convertPoint:[window convertPointFromScreen:cocoa] fromView:nil];
+    NSPoint origin = wineWindowOrigin(window);
+    return CGPointMake(origin.x + local.x, origin.y + (view.isFlipped ? local.y : npHeight - local.y));
+}
+static CGPoint physicalPoint(CGPoint virtual, NSWindow *window) {
+    if (!managedFullscreen(window)) {
+        virtual.y -= npHeight - physicalScreenTop();
+        return virtual;
+    }
+    NSView *view = window.contentView;
+    NSPoint origin = wineWindowOrigin(window);
+    NSPoint local = NSMakePoint(virtual.x - origin.x, virtual.y - origin.y);
+    if (!view.isFlipped) local.y = npHeight - local.y;
+    NSPoint cocoa = [window convertPointToScreen:[view convertPoint:local toView:nil]];
+    return CGPointMake(cocoa.x, physicalScreenTop() - cocoa.y);
+}
+static CGPoint eventLocation(CGEventRef event) {
+    CGPoint point = CGEventGetLocation(event);
+    return WINE_CALLER() && NSThread.isMainThread ? winePoint(point, inputWindow()) : point;
+}
+static CGError warpCursor(CGPoint point) {
+    if (WINE_CALLER() && NSThread.isMainThread) point = physicalPoint(point, inputWindow());
+    return CGWarpMouseCursorPosition(point);
+}
+static void eventSetLocation(CGEventRef event, CGPoint point) {
+    if (WINE_CALLER() && NSThread.isMainThread) point = physicalPoint(point, inputWindow());
+    CGEventSetLocation(event, point);
+}
+INTERPOSE(eventLocation, CGEventGetLocation);
+INTERPOSE(warpCursor, CGWarpMouseCursorPosition);
+INTERPOSE(eventSetLocation, CGEventSetLocation);
+
+static NSPoint (*flippedMouseLocation)(id, SEL, NSPoint);
+static NSPoint flippedLocation(id controller, SEL selector, NSPoint point) {
+    (void)controller; (void)selector;
+    if (npHandlingInput) {
+        CGPoint physical = physicalPoint(NSPointToCGPoint(point), inputWindow());
+        return NSMakePoint(physical.x, physicalScreenTop() - physical.y);
+    }
+    CGPoint physical = CGPointMake(point.x, physicalScreenTop() - point.y);
+    return NSPointFromCGPoint(winePoint(physical, inputWindow()));
+}
+static void (*mouseButton)(id, SEL, NSEvent *), (*mouseMove)(id, SEL, NSEvent *), (*mouseScroll)(id, SEL, NSEvent *);
+static void handleInput(id controller, SEL selector, NSEvent *event) {
+    unsigned previousDepth = npHandlingInput;
+    void *previousWindow = npInputWindow;
+    NSWindow *window = event.window;
+    // Mouse-moved events can name the main window even over a dialog.
+    if (event.type == NSEventTypeMouseMoved) {
+        CGPoint point = CGEventGetLocation(event.CGEvent);
+        NSPoint cocoa = NSMakePoint(point.x, physicalScreenTop() - point.y);
+        NSInteger number = [NSWindow windowNumberAtPoint:cocoa belowWindowWithWindowNumber:0];
+        window = [NSApp windowWithWindowNumber:number];
+    }
+    Ivar capture = class_getInstanceVariable([controller class], "mouseCaptureWindow");
+    NSWindow *captured = capture ? object_getIvar(controller, capture) : nil;
+    if (captured) window = captured;
+    npInputWindow = (__bridge void *)window;
+    npHandlingInput++;
+    @try {
+        if (selector == NSSelectorFromString(@"handleMouseButton:")) mouseButton(controller, selector, event);
+        else if (selector == NSSelectorFromString(@"handleMouseMove:")) mouseMove(controller, selector, event);
+        else mouseScroll(controller, selector, event);
+    } @finally {
+        npHandlingInput = previousDepth;
+        npInputWindow = previousWindow;
+    }
+}
+static CGFloat mappedDelta(id event, SEL selector) {
+    BOOL horizontal = selector == @selector(deltaX);
+    CGFloat delta = horizontal ? eventDeltaX(event, selector) : eventDeltaY(event, selector);
+    if (!npHandlingInput || !WINE_CALLER()) return delta;
+    NSWindow *window = inputWindow();
+    if (managedFullscreen(window)) {
+        NSView *view = window.contentView;
+        NSSize frame = view.frame.size, bounds = view.bounds.size;
+        CGFloat length = horizontal ? frame.width : frame.height;
+        if (length > 0) delta *= (horizontal ? bounds.width : bounds.height) / length;
+    }
+    return delta;
+}
+static void watchInput(void) {
+    if (flippedMouseLocation) return;
+    Class controller = NSClassFromString(@"WineApplicationController");
+    if (!controller) return;
+    const char *names[] = {"flippedMouseLocation:", "handleMouseButton:", "handleMouseMove:", "handleScrollWheel:"};
+    for (unsigned i = 0; i < 4; i++)
+        if (!class_getInstanceMethod(controller, NSSelectorFromString(@(names[i])))) return;
+    replaceMethod(controller, NSSelectorFromString(@"flippedMouseLocation:"), (IMP)flippedLocation, &flippedMouseLocation);
+    replaceMethod(controller, NSSelectorFromString(@"handleMouseButton:"), (IMP)handleInput, &mouseButton);
+    replaceMethod(controller, NSSelectorFromString(@"handleMouseMove:"), (IMP)handleInput, &mouseMove);
+    replaceMethod(controller, NSSelectorFromString(@"handleScrollWheel:"), (IMP)handleInput, &mouseScroll);
 }
 
 static NSWindowCollectionBehavior fullscreenBehavior(NSWindowCollectionBehavior behavior) {
@@ -216,6 +340,7 @@ static BOOL gameProcess(void) {
 }
 
 static void considerWindow(NSWindow *window) {
+    watchInput();
     if (!npGameProcess || !window.isVisible || window.parentWindow ||
         [NSStringFromClass(window.class) rangeOfString:@"Wine"].location == NSNotFound ||
         objc_getAssociatedObject(window, &npAttemptedWindow)) return;
@@ -288,6 +413,8 @@ __attribute__((constructor)) static void setupDisplay(void) {
         replaceMethod(NSScreen.class, @selector(visibleFrame), (IMP)virtualVisibleFrame, &screenVisibleFrame);
         replaceMethod(NSScreen.class, @selector(backingScaleFactor), (IMP)virtualScreenScale, &screenScale);
         replaceMethod(NSWindow.class, @selector(frame), (IMP)virtualWindowFrame, &windowFrame);
+        replaceMethod(NSEvent.class, @selector(deltaX), (IMP)mappedDelta, &eventDeltaX);
+        replaceMethod(NSEvent.class, @selector(deltaY), (IMP)mappedDelta, &eventDeltaY);
         replaceMethod(NSWindow.class, @selector(setBackgroundColor:), (IMP)managedBackground, &windowBackground);
         dispatch_async(dispatch_get_main_queue(), ^{
             NSNotificationCenter *center = NSNotificationCenter.defaultCenter;
