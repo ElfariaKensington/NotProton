@@ -47,3 +47,11 @@ Exiting fullscreen restores the window’s original style, background and bounds
 The native fixture opens a driver-warning dialog first, attaches a renderer after
 window creation, simulates Wine’s late white-background repaint, and checks exit.
 The live Wine fixture exercises a real warning dialog followed by an OpenGL window.
+
+Mouse buttons, movement and scrolling convert physical Quartz locations into the
+virtual Wine desktop. Native hit testing uses physical window frames; fullscreen
+input follows the content view’s scale and letterboxing. Cursor polling and warps
+use the same forward/inverse transform. The native regression dispatches in-memory
+events through the Wine input boundary and checks dialog hits, fullscreen points,
+scrolling and cursor round trips at 1920×1080 and 2560×1600 without moving the
+system cursor or posting input to another app.
