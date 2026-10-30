@@ -12,8 +12,25 @@
     "   hint=el('div','MSCXDisplayHint','Runs on the main display in a macOS fullscreen Space at the selected resolution. Your Mac’s display settings stay unchanged.')," \
     "   status=el('div','MSCXDisplayHint'),retry=el('button','MSCXBtn','Retry');" \
     "  select.setAttribute('aria-label','Fullscreen resolution');status.setAttribute('role','status');" \
-    "  const choices=[['','Use game settings'],['1280x720','1280 × 720'],['1600x900','1600 × 900'],['1920x1080','1920 × 1080'],['2560x1440','2560 × 1440'],['3440x1440','3440 × 1440'],['3840x2160','3840 × 2160'],['custom','Custom…']];" \
-    "  for(const [value,title] of choices){const option=el('option','',title);option.value=value;select.append(option)}" \
+    "  const common=[[1280,720],[1280,800],[1440,900],[1600,900],[1680,1050],[1920,1080],[1920,1200],[2560,1440],[2560,1600],[3440,1440],[3840,2160],[3840,2400]];" \
+    "  const pending=el('option','','Loading resolutions…');pending.value='';select.append(pending);" \
+    "  const choices=[];let displayDefault=[1920,1080];" \
+    "  const populate=info=>{" \
+    "   choices.length=0;select.replaceChildren();const seen=new Set;" \
+    "   const add=(parent,value,label)=>{const option=el('option','',label);option.value=value;parent.append(option);choices.push([value,label])};" \
+    "   add(select,'','Use game settings');" \
+    "   const group=(label,rows)=>{const node=el('optgroup');node.label=label;" \
+    "    for(const pair of rows){if(!Array.isArray(pair)||pair.length!==2)continue;const [w,h]=pair.map(Number);" \
+    "     if(!Number.isInteger(w)||!Number.isInteger(h)||w<640||h<480||w>16384||h>16384)continue;" \
+    "     const value=w+'x'+h;if(seen.has(value))continue;seen.add(value);" \
+    "     const current=Array.isArray(info.current)&&info.current[0]===w&&info.current[1]===h;" \
+    "     add(node,value,w+' × '+h+(current?' (Current display)':''));" \
+    "    }if(node.children.length)select.append(node);" \
+    "   };" \
+    "   group('Display resolutions',Array.isArray(info.modes)?info.modes:[]);group('Common game resolutions',common);" \
+    "   if(Array.isArray(info.current)&&info.current[0]>=640&&info.current[1]>=480)displayDefault=info.current;" \
+    "   add(select,'custom','Custom…');" \
+    "  };" \
     "  for(const [input,name,min] of [[width,'Width',640],[height,'Height',480]]){" \
     "   input.type='number';input.min=min;input.max=16384;input.step=1;input.setAttribute('aria-label',name);" \
     "  }" \
@@ -26,11 +43,11 @@
     "   select.disabled=loading||saving;width.disabled=loading||saving;height.disabled=loading||saving;" \
     "   apply.disabled=loading||saving||value()===saved};" \
     "  const show=text=>{if(live())status.textContent=text};" \
-    "  select.onchange=()=>{if(select.value==='custom'&&!width.value){width.value=1920;height.value=1080}update();show('Apply to use this setting on the next launch.')};" \
+    "  select.onchange=()=>{if(select.value==='custom'&&!width.value){[width.value,height.value]=displayDefault}update();show('Apply to use this setting on the next launch.')};" \
     "  width.oninput=height.oninput=()=>{update();show('Apply to use this setting on the next launch.')};" \
     "  const load=()=>{loading=true;retry.hidden=true;update();show('Loading…');" \
-    "   Promise.resolve().then(()=>globalThis.MSCXRoute('NotProton.GetDisplay#1',id)).then(text=>{" \
-    "    if(!live())return;saved=text;const preset=choices.some(([v])=>v===text);select.value=preset?text:'custom';" \
+    "   Promise.resolve().then(()=>Promise.all([globalThis.MSCXRoute('NotProton.GetDisplay#1',id),globalThis.MSCXRoute('NotProton.GetDisplayModes#1',id)])).then(([text,raw])=>{" \
+    "    if(!live())return;populate(JSON.parse(raw));saved=text;const preset=choices.some(([v])=>v===text);select.value=preset?text:'custom';" \
     "    if(text){[width.value,height.value]=text.split('x')}loading=false;update();show('Applies when you next launch the game.');" \
     "   }).catch(()=>{show('Could not load the display settings.');if(live())retry.hidden=false});" \
     "  };" \

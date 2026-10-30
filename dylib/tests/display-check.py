@@ -19,7 +19,7 @@ class DisplayIntegration(unittest.TestCase):
         cls.macos.mkdir(parents=True)
         cls.loader = cls.macos / 'display-fixture'
         flags = ['clang', '-mmacosx-version-min=15.0', '-fobjc-arc', '-O2', '-Wall', '-Wextra',
-                 '-framework', 'AppKit', '-framework', 'CoreGraphics']
+                 '-framework', 'AppKit', '-framework', 'CoreGraphics', '-framework', 'QuartzCore', '-framework', 'Metal']
         subprocess.run(flags + ['-dynamiclib', '-o', str(cls.root / 'winemac.so'), str(ROOT / 'dylib/tests/display-driver-fixture.m')], check=True)
         subprocess.run(flags + ['-o', str(cls.loader), str(ROOT / 'dylib/tests/display-window-fixture.m')], check=True)
         with (cls.bundle / 'Contents/Info.plist').open('wb') as f:
@@ -33,8 +33,9 @@ class DisplayIntegration(unittest.TestCase):
     def tearDownClass(cls):
         cls.temp.cleanup()
 
-    def probe(self, resolution='', window=False, session=False):
+    def probe(self, resolution='', window=False, session=False, exit_space=False):
         env = dict(self.env, NOTPROTON_DISPLAY_RESOLUTION=resolution)
+        if exit_space: env['NP_DISPLAY_TEST_EXIT']='1'
         if session:
             env['DYLD_INSERT_LIBRARIES'] = str(ROOT / 'out/game-client.dylib') + ':' + env['DYLD_INSERT_LIBRARIES']
             env['NOTPROTON_GAME_CHANNEL'] = 'com.notproton.display-test.session'
@@ -66,6 +67,9 @@ class DisplayIntegration(unittest.TestCase):
     def test_native_fullscreen_space_preserves_real_display(self):
         state = self.probe('1920x1080', window=True)
         self.assertTrue(state['fullscreen'], state)
+        self.assertTrue(state['dialogUnchanged'], state)
+        self.assertTrue(state['backgroundBlack'] and state['canvasBlack'], state)
+        self.assertTrue(state['separatorHidden'] and state['titleHidden'], state)
         self.assertTrue(state['physicalUnchanged'], state)
         self.assertEqual(state['category'], 'public.app-category.games')
         self.assertGreaterEqual(state['canvasWidth'], 1920)
@@ -74,8 +78,17 @@ class DisplayIntegration(unittest.TestCase):
     def test_fullscreen_with_single_icon_client(self):
         state = self.probe('1920x1080', window=True, session=True)
         self.assertTrue(state['fullscreen'], state)
+        self.assertTrue(state['dialogUnchanged'], state)
+        self.assertTrue(state['backgroundBlack'] and state['canvasBlack'], state)
+        self.assertTrue(state['separatorHidden'] and state['titleHidden'], state)
         self.assertTrue(state['physicalUnchanged'], state)
         self.assertEqual(state['policy'], 1, 'The Wine client stays accessory while using a native Space')
+
+    def test_exit_restores_window_chrome(self):
+        state = self.probe('1920x1080', window=True, exit_space=True)
+        self.assertFalse(state['fullscreen'], state)
+        self.assertTrue(state['styleRestored'], state)
+        self.assertTrue(state['dialogUnchanged'], state)
 
 if __name__ == '__main__':
     unittest.main()

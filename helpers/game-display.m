@@ -2,6 +2,7 @@
 // AppKit keeps physical screen geometry; only the Wine Mac driver's queries lie.
 #import <AppKit/AppKit.h>
 #import <CoreGraphics/CoreGraphics.h>
+#import <QuartzCore/QuartzCore.h>
 #import <objc/runtime.h>
 #import <objc/message.h>
 #include <dlfcn.h>
@@ -12,7 +13,8 @@ static unsigned npWidth, npHeight;
 static BOOL npGameProcess;
 static CGDirectDisplayID npDisplay;
 static CGDisplayModeRef npMode;
-static char npManagedWindow, npAttemptedWindow;
+static char npManagedWindow, npAttemptedWindow, npOriginalWindow;
+static void scheduleWindow(NSWindow *window);
 
 static BOOL wineCaller(void *address) {
     if (!npWidth) return NO;
@@ -88,6 +90,12 @@ INTERPOSE(releaseDisplays, CGReleaseAllDisplays);
 
 static NSRect (*screenFrame)(id, SEL), (*screenVisibleFrame)(id, SEL), (*windowFrame)(id, SEL);
 static CGFloat (*screenScale)(id, SEL);
+static void (*windowBackground)(id, SEL, NSColor *);
+static void managedBackground(id window, SEL selector, NSColor *color) {
+    if (objc_getAssociatedObject(window, &npManagedWindow) && color.alphaComponent > 0)
+        color = NSColor.blackColor;
+    windowBackground(window, selector, color);
+}
 static BOOL targetScreen(NSScreen *screen) {
     return [screen.deviceDescription[@"NSScreenNumber"] unsignedIntValue] == npDisplay;
 }
@@ -132,9 +140,57 @@ static void managedBehavior(id window, SEL selector, NSWindowCollectionBehavior 
     ((void (*)(id, SEL, NSWindowCollectionBehavior))setter)(window, @selector(setCollectionBehavior:), fullscreenBehavior(behavior));
 }
 
+// Require an actual game rendering surface; ordinary GDI dialogs and bitmap splashes stay windowed.
+static BOOL metalSurface(CALayer *layer) {
+    if (!layer) return NO;
+    if ([layer isKindOfClass:CAMetalLayer.class] && ((CAMetalLayer *)layer).device) return YES;
+    if ([NSStringFromClass(layer.class) isEqualToString:@"CALayerHost"]) return YES;
+    for (CALayer *child in layer.sublayers) if (metalSurface(child)) return YES;
+    return NO;
+}
+static BOOL graphicsSurface(NSView *view) {
+    if (!view || view.isHidden) return NO;
+    if (metalSurface(view.layer)) return YES;
+    SEL hasGL = NSSelectorFromString(@"hasGLDescendant");
+    if ([view respondsToSelector:hasGL] && ((BOOL (*)(id, SEL))objc_msgSend)(view, hasGL)) return YES;
+    for (NSView *child in view.subviews) if (graphicsSurface(child)) return YES;
+    return NO;
+}
+static void (*wineWindowDrawn)(id, SEL);
+static void windowDrawn(id window, SEL selector) {
+    wineWindowDrawn(window, selector);
+    scheduleWindow(window);
+}
+static void watchRendering(NSWindow *window) {
+    if (wineWindowDrawn) return;
+    SEL selector = NSSelectorFromString(@"windowDidDrawContent");
+    Method method = class_getInstanceMethod(window.class, selector);
+    if (method) replaceMethod(window.class, selector, (IMP)windowDrawn, &wineWindowDrawn);
+}
+static void restoreWindow(NSWindow *window) {
+    NSDictionary *state = objc_getAssociatedObject(window, &npOriginalWindow);
+    objc_setAssociatedObject(window, &npManagedWindow, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    if (!state) return;
+    window.styleMask = [state[@"style"] unsignedIntegerValue];
+    window.collectionBehavior = [state[@"behavior"] unsignedIntegerValue];
+    window.titleVisibility = [state[@"titleVisibility"] integerValue];
+    window.titlebarAppearsTransparent = [state[@"transparentTitle"] boolValue];
+    window.titlebarSeparatorStyle = [state[@"separator"] integerValue];
+    window.hasShadow = [state[@"shadow"] boolValue];
+    window.backgroundColor = state[@"background"];
+    window.contentView.bounds = [state[@"bounds"] rectValue];
+    window.contentView.layer.backgroundColor = [state[@"layerBackground"] CGColor];
+    objc_setAssociatedObject(window, &npOriginalWindow, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+}
+
 static void scaleContent(NSWindow *window) {
     if (!objc_getAssociatedObject(window, &npManagedWindow) || !(window.styleMask & NSWindowStyleMaskFullScreen)) return;
     NSView *view = window.contentView;
+    // Wine's transparency checks may repaint the uncovered canvas after entry.
+    // Leave OpenGL underlays transparent; Metal letterboxes must be solid black.
+    BOOL metal = metalSurface(view.layer);
+    window.backgroundColor = metal ? NSColor.blackColor : NSColor.clearColor;
+    if (metal) view.layer.backgroundColor = NSColor.blackColor.CGColor;
     NSSize physical = view.frame.size;
     CGFloat scale = MIN(physical.width / npWidth, physical.height / npHeight);
     if (scale <= 0) return;
@@ -153,7 +209,8 @@ static BOOL gameProcess(void) {
         if (![path.pathExtension isEqualToString:@"exe"]) continue;
         NSString *name = path.lastPathComponent;
         return ![path containsString:@"/windows/"] && ![path containsString:@"/legacycompat/"] &&
-            ![@[@"steam.exe", @"explorer.exe", @"winedbg.exe", @"services.exe"] containsObject:name];
+            ![@[@"steam.exe", @"explorer.exe", @"winedbg.exe", @"services.exe", @"werfault.exe", @"crashpad_handler.exe"] containsObject:name] &&
+            ![name hasPrefix:@"unitycrashhandler"] && ![name hasPrefix:@"crashreportclient"];
     }
     return NO;
 }
@@ -163,7 +220,17 @@ static void considerWindow(NSWindow *window) {
         [NSStringFromClass(window.class) rangeOfString:@"Wine"].location == NSNotFound ||
         objc_getAssociatedObject(window, &npAttemptedWindow)) return;
     NSSize size = window.contentView.frame.size;
-    if (size.width < 320 || size.height < 240 || (window.styleMask & NSWindowStyleMaskUtilityWindow)) return;
+    watchRendering(window);
+    if (size.width < 64 || size.height < 64 || (window.styleMask & NSWindowStyleMaskUtilityWindow) ||
+        !graphicsSurface(window.contentView)) return;
+    NSColor *layerBackground = window.contentView.layer.backgroundColor
+        ? [NSColor colorWithCGColor:window.contentView.layer.backgroundColor] : NSColor.clearColor;
+    NSDictionary *state = @{@"style": @(window.styleMask & ~NSWindowStyleMaskFullScreen), @"behavior": @(window.collectionBehavior),
+        @"titleVisibility": @(window.titleVisibility), @"transparentTitle": @(window.titlebarAppearsTransparent),
+        @"separator": @(window.titlebarSeparatorStyle), @"shadow": @(window.hasShadow),
+        @"background": window.backgroundColor ?: NSColor.clearColor,
+        @"bounds": [NSValue valueWithRect:window.contentView.bounds], @"layerBackground": layerBackground};
+    objc_setAssociatedObject(window, &npOriginalWindow, state, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     objc_setAssociatedObject(window, &npAttemptedWindow, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     objc_setAssociatedObject(window, &npManagedWindow, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     // Wine otherwise reclassifies maximized/borderless windows as fullscreen auxiliaries.
@@ -172,7 +239,11 @@ static void considerWindow(NSWindow *window) {
         if (method) replaceMethod(window.class, NSSelectorFromString(@"adjustFullScreenBehavior:"), (IMP)managedBehavior, &adjustBehavior);
     }
     window.collectionBehavior = fullscreenBehavior(window.collectionBehavior);
-    window.backgroundColor = NSColor.blackColor;
+    window.backgroundColor = metalSurface(window.contentView.layer) ? NSColor.blackColor : NSColor.clearColor;
+    window.titleVisibility = NSWindowTitleHidden;
+    window.titlebarAppearsTransparent = YES;
+    window.titlebarSeparatorStyle = NSTitlebarSeparatorStyleNone;
+    window.hasShadow = NO;
     if (window.styleMask & NSWindowStyleMaskFullScreen) { scaleContent(window); return; }
     for (NSScreen *screen in NSScreen.screens) {
         if (!targetScreen(screen)) continue;
@@ -182,10 +253,24 @@ static void considerWindow(NSWindow *window) {
         [window setFrame:frame display:YES];
         break;
     }
-    window.styleMask |= NSWindowStyleMaskTitled | NSWindowStyleMaskResizable;
+    window.styleMask |= NSWindowStyleMaskTitled | NSWindowStyleMaskResizable | NSWindowStyleMaskFullSizeContentView;
+    window.titleVisibility = NSWindowTitleHidden;
+    window.titlebarAppearsTransparent = YES;
+    window.titlebarSeparatorStyle = NSTitlebarSeparatorStyleNone;
+    window.hasShadow = NO;
     // Invoke AppKit's native implementation, including its real fullscreen Space.
     IMP toggle = class_getMethodImplementation(NSWindow.class, @selector(toggleFullScreen:));
     ((void (*)(id, SEL, id))toggle)(window, @selector(toggleFullScreen:), nil);
+}
+
+static void scheduleWindow(NSWindow *window) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        @try { considerWindow(window); }
+        @catch (NSException *error) {
+            restoreWindow(window);
+            fprintf(stderr, "NotProton display: fullscreen transition failed: %s\n", error.reason.UTF8String);
+        }
+    });
 }
 
 __attribute__((constructor)) static void setupDisplay(void) {
@@ -203,17 +288,13 @@ __attribute__((constructor)) static void setupDisplay(void) {
         replaceMethod(NSScreen.class, @selector(visibleFrame), (IMP)virtualVisibleFrame, &screenVisibleFrame);
         replaceMethod(NSScreen.class, @selector(backingScaleFactor), (IMP)virtualScreenScale, &screenScale);
         replaceMethod(NSWindow.class, @selector(frame), (IMP)virtualWindowFrame, &windowFrame);
+        replaceMethod(NSWindow.class, @selector(setBackgroundColor:), (IMP)managedBackground, &windowBackground);
         dispatch_async(dispatch_get_main_queue(), ^{
             NSNotificationCenter *center = NSNotificationCenter.defaultCenter;
-            for (NSString *name in @[NSWindowDidBecomeKeyNotification, NSWindowDidBecomeMainNotification, NSWindowDidChangeOcclusionStateNotification])
+            for (NSString *name in @[NSWindowDidBecomeKeyNotification, NSWindowDidBecomeMainNotification, NSWindowDidChangeOcclusionStateNotification, NSWindowDidUpdateNotification])
                 [center addObserverForName:name object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *note) {
-                    dispatch_async(dispatch_get_main_queue(), ^{
-                        @try { considerWindow(note.object); }
-                        @catch (NSException *error) {
-                            objc_setAssociatedObject(note.object, &npManagedWindow, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-                            fprintf(stderr, "NotProton display: fullscreen transition failed: %s\n", error.reason.UTF8String);
-                        }
-                    });
+                    NSWindow *window = note.object;
+                    if (npGameProcess && !objc_getAssociatedObject(window, &npAttemptedWindow)) scheduleWindow(window);
                 }];
             for (NSString *name in @[NSWindowDidEnterFullScreenNotification, NSWindowDidResizeNotification])
                 [center addObserverForName:name object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *note) {
@@ -224,8 +305,7 @@ __attribute__((constructor)) static void setupDisplay(void) {
                 }];
             [center addObserverForName:NSWindowDidExitFullScreenNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *note) {
                 NSWindow *window = note.object;
-                if (objc_getAssociatedObject(window, &npManagedWindow))
-                    window.contentView.bounds = NSMakeRect(0, 0, window.contentView.frame.size.width, window.contentView.frame.size.height);
+                if (objc_getAssociatedObject(window, &npManagedWindow)) restoreWindow(window);
             }];
             fprintf(stderr, "NotProton display: virtual %ux%u on display %u; native fullscreen enabled\n", npWidth, npHeight, npDisplay);
         });

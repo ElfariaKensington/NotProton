@@ -1033,6 +1033,47 @@ static void game_env_cases(void) {
     check(system(cmd) == 0, "environment fixture cleaned up");
 }
 
+static void display_mode_cases(void) {
+    uintptr_t response = (uintptr_t)response_buf;
+    check(get_display_modes(build_request(REQ_HAS_APPID, 480), response) == RESULT_OK,
+          "system display mode query succeeds through the actual handler");
+    char json[16384];
+    pb_copy_string(captured_pb, captured_pb_len, RESP_DEFAULT, json, sizeof json);
+    check(strstr(json, "\"modes\":[") && strstr(json, "\"current\":["),
+          "display mode reply includes current and available dimensions");
+    display_size_t sizes[4]; size_t count = 0;
+    display_add_size(sizes, &count, 2560, 1600);
+    display_add_size(sizes, &count, 2560, 1600);
+    check(count == 1, "duplicate display refresh/scaling variants collapse to one size");
+    CGDisplayModeRef current = CGDisplayCopyDisplayMode(CGMainDisplayID());
+    if (current) {
+        char pair[64];
+        snprintf(pair, sizeof pair, "[%zu,%zu]", CGDisplayModeGetWidth(current), CGDisplayModeGetHeight(current));
+        check(strstr(json, pair) != NULL, "current macOS logical size appears in the reply");
+        snprintf(pair, sizeof pair, "[%zu,%zu]", CGDisplayModeGetPixelWidth(current), CGDisplayModeGetPixelHeight(current));
+        check(strstr(json, pair) != NULL, "current macOS pixel size appears in the reply");
+        CGDisplayModeRelease(current);
+    }
+    const void *key = kCGDisplayShowDuplicateLowResolutionModes, *value = kCFBooleanTrue;
+    CFDictionaryRef options = CFDictionaryCreate(NULL, &key, &value, 1, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+    CFArrayRef modes = CGDisplayCopyAllDisplayModes(CGMainDisplayID(), options);
+    CFRelease(options);
+    if (modes) {
+        for (CFIndex i = 0; i < CFArrayGetCount(modes); i++) {
+            CGDisplayModeRef mode = (CGDisplayModeRef)CFArrayGetValueAtIndex(modes, i);
+            size_t dims[2][2] = {{CGDisplayModeGetWidth(mode), CGDisplayModeGetHeight(mode)},
+                                  {CGDisplayModeGetPixelWidth(mode), CGDisplayModeGetPixelHeight(mode)}};
+            for (int j = 0; j < 2; j++) {
+                if (dims[j][0] < NP_DISPLAY_MIN_WIDTH || dims[j][1] < NP_DISPLAY_MIN_HEIGHT ||
+                    dims[j][0] > NP_DISPLAY_MAX || dims[j][1] > NP_DISPLAY_MAX) continue;
+                char pair[64]; snprintf(pair, sizeof pair, "[%zu,%zu]", dims[j][0], dims[j][1]);
+                check(strstr(json, pair) != NULL, "every supported macOS display dimension appears in the reply");
+            }
+        }
+        CFRelease(modes);
+    }
+}
+
 static void display_route_cases(void) {
     char root[] = "/tmp/notproton-display.XXXXXX";
     check(mkdtemp(root) != NULL, "display fixture exists");
@@ -1124,6 +1165,7 @@ int main(void) {
     rebuild_route_cases();
     game_env_cases();
     display_route_cases();
+    display_mode_cases();
 
     if (failures) {
         printf("==> compatsvc: %d check(s) failed\n", failures);

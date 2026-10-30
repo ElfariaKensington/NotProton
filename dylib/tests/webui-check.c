@@ -41,7 +41,7 @@ int main(void) {
         "NotProton.GetGameEnvironment#1", "NotProton.SetGameEnvironment#1",
         "NotProton.PrefixState#1", "NotProton.RebuildPrefix#1",
         "NotProton.BackupAndRebuildPrefix#1", "NotProton.OpenPrefixLog#1",
-        "NotProton.GetDisplay#1", "NotProton.SetDisplay#1",
+        "NotProton.GetDisplayModes#1", "NotProton.GetDisplay#1", "NotProton.SetDisplay#1",
     };
     const size_t required = sizeof compatibility_routes / sizeof compatibility_routes[0];
     g_registry = (uintptr_t)jobs;

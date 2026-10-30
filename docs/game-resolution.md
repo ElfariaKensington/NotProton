@@ -1,7 +1,8 @@
 # Per-game fullscreen resolution
 
-Properties > Compatibility > Fullscreen resolution offers presets and custom
-width/height. Apply saves the selection for the next launch. Use game settings
+Properties > Compatibility > Fullscreen resolution reads the main display’s available
+macOS modes, including HiDPI logical and pixel dimensions, and offers common game
+resolutions plus custom width/height. Refresh-rate duplicates are collapsed. Apply saves the selection for the next launch. Use game settings
 removes the override. Each game has a `notproton-display` file beside `pfx` in its
 Steam library's `steamapps/compatdata/<appid>` directory. The main display is used;
 settings are never placed in Steam launch options.
@@ -39,3 +40,10 @@ This uses a temporary prefix and generated game bundle, confirms the Windows
 desktop and client area are 1920×1080 in a native fullscreen Space, checks the
 physical mode is unchanged, and confirms disabling restores the default desktop.
 The runner must have NotProton’s normal DYLD entitlement patch.
+
+The helper keeps native titlebar separators hidden in fullscreen and maintains a
+black uncovered canvas even when Wine changes the window background after entry.
+Exiting fullscreen restores the window’s original style, background and bounds.
+The native fixture opens a driver-warning dialog first, attaches a renderer after
+window creation, simulates Wine’s late white-background repaint, and checks exit.
+The live Wine fixture exercises a real warning dialog followed by an OpenGL window.
