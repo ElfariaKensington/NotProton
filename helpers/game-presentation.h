@@ -1,7 +1,12 @@
+#include <dlfcn.h>
 // App-local fullscreen presentation. Never change global preferences or Cmd-Tab.
 static NSApplicationPresentationOptions npRequestedPresentation;
 static BOOL npOwnsPresentation;
 static __weak NSWindow *npPresentationWindow;
+static int32_t (*npSystemUISet)(uint32_t, uint32_t);
+static void (*npSystemUIGet)(uint32_t *, uint32_t *);
+static BOOL npOwnsSystemUI;
+static uint32_t npSavedSystemUIMode, npSavedSystemUIOptions;
 static void (*npPresentationSet)(id, SEL, NSApplicationPresentationOptions);
 
 static BOOL npPresentationRenderer(NSView *view) {
@@ -15,7 +20,7 @@ static BOOL npPresentationRenderer(NSView *view) {
     return NO;
 }
 static BOOL npPresentationFullscreen(NSWindow *window, NSWindow *modal, BOOL alreadyOwned) {
-    if (!window || !window.isVisible || window.isMiniaturized || modal ||
+    if (!window || !window.isVisible || !window.isOnActiveSpace || window.isMiniaturized || modal ||
         window.attachedSheet || window.parentWindow ||
         (window.styleMask & NSWindowStyleMaskUtilityWindow) ||
         [NSStringFromClass(window.class) rangeOfString:@"Wine"].location == NSNotFound) return NO;
@@ -75,15 +80,39 @@ static BOOL npPresentationNeedsUpdate(NSApplicationPresentationOptions desired,
         NSApplicationPresentationAutoHideDock | NSApplicationPresentationAutoHideMenuBar;
     return !owned || requested != desired || (system & mask) != (desired & mask);
 }
+static void npEnsureSystemUI(NSApplicationPresentationOptions desired,
+                             NSApplicationPresentationOptions effective, BOOL active) {
+    NSApplicationPresentationOptions mask = NSApplicationPresentationHideDock | NSApplicationPresentationHideMenuBar |
+        NSApplicationPresentationAutoHideDock | NSApplicationPresentationAutoHideMenuBar;
+    if (!active || (effective & mask) == (desired & mask) || !npSystemUISet || !npSystemUIGet) return;
+    if (!npOwnsSystemUI) {
+        npSystemUIGet(&npSavedSystemUIMode, &npSavedSystemUIOptions);
+        npOwnsSystemUI = YES;
+    }
+    // Space changes can leave the process-local HIToolbox UI mode at Normal
+    // while AppKit still caches HideDock/HideMenuBar. Its identical setter then
+    // does nothing. Reapply AllHidden directly, without changing global prefs.
+    // Bits 0/1 are AutoShowMenuBar/AnimateMenuBar, neither is wanted during play.
+    npSystemUISet(3, npSavedSystemUIOptions & ~3u);
+}
+static void npRestoreSystemUI(void) {
+    if (!npOwnsSystemUI) return;
+    npOwnsSystemUI = NO;
+    if (npSystemUISet) npSystemUISet(npSavedSystemUIMode, npSavedSystemUIOptions);
+}
+static void npWriteProtectedPresentation(id application, NSApplicationPresentationOptions desired) {
+    npPresentationSet(application, @selector(setPresentationOptions:), desired);
+    npEnsureSystemUI(desired, [application currentSystemPresentationOptions], [application isActive]);
+}
 static void npLogPresentation(BOOL protect) {
     static NSString *last;
     NSWindow *key = NSApp.keyWindow;
-    NSString *state = [NSString stringWithFormat:@"active=%d key=%ld keyClass=%@ keyStyle=0x%lx owner=%ld protect=%d requested=0x%lx system=0x%lx",
-        NSApp.isActive, (long)key.windowNumber, key ? NSStringFromClass(key.class) : @"none", (unsigned long)key.styleMask,
+    NSString *state = [NSString stringWithFormat:@"active=%d space=%d key=%ld keyClass=%@ keyStyle=0x%lx owner=%ld protect=%d requested=0x%lx system=0x%lx",
+        NSApp.isActive, key.isOnActiveSpace, (long)key.windowNumber, key ? NSStringFromClass(key.class) : @"none", (unsigned long)key.styleMask,
         (long)npPresentationWindow.windowNumber, protect,
         (unsigned long)NSApp.presentationOptions, (unsigned long)NSApp.currentSystemPresentationOptions];
     if (![state isEqualToString:last]) {
-        fprintf(stderr, "NotProton presentation v2: %s\n", state.UTF8String);
+        fprintf(stderr, "NotProton presentation v3: %s\n", state.UTF8String);
         last = state;
     }
 }
@@ -92,12 +121,13 @@ static void npApplyPresentation(BOOL protect) {
     if (protect) {
         NSApplicationPresentationOptions options = npProtectedPresentation(npRequestedPresentation);
         if (npPresentationNeedsUpdate(options, NSApp.presentationOptions, NSApp.currentSystemPresentationOptions, npOwnsPresentation))
-            npPresentationSet(NSApp, @selector(setPresentationOptions:), options);
+            npWriteProtectedPresentation(NSApp, options);
         npOwnsPresentation = YES;
     } else if (npOwnsPresentation) {
         npOwnsPresentation = NO;
+        npRestoreSystemUI();
         npPresentationSet(NSApp, @selector(setPresentationOptions:), npRequestedPresentation);
-    }
+    } else if (!protect) npRestoreSystemUI();
 }
 static void npSetPresentation(id application, SEL selector, NSApplicationPresentationOptions options) {
     if (!NSThread.isMainThread) {
@@ -107,7 +137,8 @@ static void npSetPresentation(id application, SEL selector, NSApplicationPresent
     npRequestedPresentation = options;
     BOOL protect = npShouldProtectPresentation();
     npOwnsPresentation = protect;
-    npPresentationSet(application, selector, protect ? npProtectedPresentation(options) : options);
+    if (protect) npWriteProtectedPresentation(application, npProtectedPresentation(options));
+    else { npRestoreSystemUI(); npPresentationSet(application, selector, options); }
     npLogPresentation(protect);
 }
 static void npRefreshPresentation(void) {
@@ -121,6 +152,8 @@ static BOOL npPresentationEventReleases(NSString *name, NSWindow *changed, NSWin
         ([name isEqualToString:NSWindowWillCloseNotification] || [name isEqualToString:NSWindowWillBeginSheetNotification]);
 }
 static void npWatchPresentation(void) {
+    npSystemUISet = dlsym(RTLD_DEFAULT, "SetSystemUIMode");
+    npSystemUIGet = dlsym(RTLD_DEFAULT, "GetSystemUIMode");
     npRequestedPresentation = NSApp.presentationOptions;
     Method method = class_getInstanceMethod(NSApplication.class, @selector(setPresentationOptions:));
     npPresentationSet = (void *)method_getImplementation(method);
@@ -143,5 +176,13 @@ static void npWatchPresentation(void) {
         }];
     [center addObserverForName:NSApplicationWillTerminateNotification object:nil queue:NSOperationQueue.mainQueue
         usingBlock:^(NSNotification *note) { (void)note; npPresentationWindow = nil; npApplyPresentation(NO); }];
+    NSNotificationCenter *workspace = NSWorkspace.sharedWorkspace.notificationCenter;
+    for (NSString *name in @[NSWorkspaceActiveSpaceDidChangeNotification, NSWorkspaceDidActivateApplicationNotification])
+        [workspace addObserverForName:name object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *note) {
+            (void)note;
+            npRefreshPresentation();
+            // Let the paired AppKit activation/key-window notification settle.
+            dispatch_async(dispatch_get_main_queue(), ^{ npRefreshPresentation(); });
+        }];
     npRefreshPresentation();
 }

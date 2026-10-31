@@ -44,3 +44,14 @@ it. A real dialog, mode change, game close or app deactivation still releases it
 The policy checks effective system presentation flags as well as AppKit’s cached
 request and reasserts protection if they diverge. State transitions are recorded
 as `NotProton presentation v2` lines in the existing per-game Wine log.
+
+Desktop/Space round trips can reset the effective HIToolbox process UI mode while
+AppKit retains its cached HideDock/HideMenuBar request. Repeating the same setter
+then does not recover the system policy. When this exact mismatch is detected for
+the active fullscreen game, the helper reapplies process-local AllHidden directly.
+It saves and restores the previous process UI mode/options on release, without
+changing global preferences or disabling application switching. Native tests reset
+the effective mode repeatedly while retaining the AppKit cache, cover accessory
+clients, and check release on returning to windowed mode.
+Space changes are observed explicitly, and windows outside the active Space cannot
+retain the override even if AppKit’s active-app state has not yet caught up.

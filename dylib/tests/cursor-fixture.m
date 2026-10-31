@@ -4,11 +4,12 @@
 #include <stdio.h>
 
 @interface WineWindow : NSPanel
-@property BOOL testVisible, testKey, testMinimized, testNativeFullscreen;
+@property BOOL testVisible, testKey, testMinimized, testNativeFullscreen, testOnActiveSpace;
 @property NSWindow *testSheet;
 @end
 @implementation WineWindow
 - (BOOL)isVisible { return self.testVisible; }
+- (BOOL)isOnActiveSpace { return self.testOnActiveSpace; }
 - (NSWindowStyleMask)styleMask { return [super styleMask] | (self.testNativeFullscreen ? NSWindowStyleMaskFullScreen : 0); }
 - (BOOL)isKeyWindow { return self.testKey; }
 - (BOOL)isMiniaturized { return self.testMinimized; }
@@ -37,8 +38,21 @@ static NSCursor *testCurrent;
 static unsigned sets;
 static NSApplicationPresentationOptions testPresentation;
 static unsigned presentationSets;
+static BOOL testPresentationCache;
+static NSApplicationPresentationOptions testSystemPresentation;
+static uint32_t testSystemMode, testSystemOptions;
+static unsigned testSystemSets;
+static void getSystemUI(uint32_t *mode, uint32_t *options) { *mode=testSystemMode;*options=testSystemOptions; }
+static int32_t setSystemUI(uint32_t mode, uint32_t options) {
+    testSystemMode=mode;testSystemOptions=options;testSystemSets++;
+    testSystemPresentation=mode==3 ? NSApplicationPresentationHideDock|NSApplicationPresentationHideMenuBar : 0;
+    return 0;
+}
 static void recordPresentation(id app, SEL selector, NSApplicationPresentationOptions options) {
-    (void)app;(void)selector;testPresentation=options;presentationSets++;
+    (void)app;(void)selector;
+    if (!testPresentationCache || testPresentation!=options) testSystemPresentation=options;
+    testPresentation=options;
+    presentationSets++;
 }
 static id currentCursor(id self, SEL selector) { (void)self;(void)selector;return testCurrent; }
 static void recordSet(id cursor, SEL selector) { (void)selector;testCurrent=cursor;sets++; }
@@ -54,7 +68,7 @@ int main(int argc, char **argv) {
         [NSApplication sharedApplication];
         WineWindow *game=[[WineWindow alloc] initWithContentRect:NSMakeRect(100,100,800,600)
             styleMask:NSWindowStyleMaskTitled|NSWindowStyleMaskResizable backing:NSBackingStoreBuffered defer:NO];
-        game.testVisible=YES;game.testKey=YES;
+        game.testVisible=YES;game.testKey=YES;game.testOnActiveSpace=YES;
         NSView *render=[[NSView alloc] initWithFrame:NSMakeRect(50,50,600,400)];
         CAMetalLayer *layer=[CAMetalLayer layer];layer.device=MTLCreateSystemDefaultDevice();
         check(layer.device!=nil,"Metal fixture has a real device");
@@ -113,6 +127,10 @@ int main(int argc, char **argv) {
         safe.size.width-=notch.left+notch.right;safe.size.height-=notch.top+notch.bottom;
         [game setFrame:safe display:NO];gl.frame=game.contentView.bounds;
         check(npPresentationTarget(game,YES,nil),"notch-safe fullscreen remains protected");
+        game.testOnActiveSpace=NO;
+        check(npPresentationCandidate(nil,game,YES,nil)==nil,"switching to Desktop releases policy even before app activation catches up");
+        game.testOnActiveSpace=YES;
+        check(npPresentationTarget(game,YES,nil),"returning to game Space reacquires protection");
         [hud removeFromSuperview];
         [gl removeFromSuperview];
         check(npPresentationCandidate(nil,game,YES,nil)==game,"owned borderless fullscreen survives renderer replacement");
@@ -177,6 +195,23 @@ int main(int argc, char **argv) {
         npApplyPresentation(NO);check(testPresentation==defaults,"focus loss restores original presentation");
         unsigned savedSets=presentationSets;npApplyPresentation(NO);
         check(presentationSets==savedSets,"repeat release does not overwrite another owner's presentation");
+        testPresentationCache=YES;testPresentation=protected;testSystemPresentation=0;presentationSets=0;
+        npSystemUISet=setSystemUI;npSystemUIGet=getSystemUI;testSystemMode=0;testSystemOptions=0;
+        for(unsigned transition=0;transition<3;transition++) {
+            testSystemMode=0;testSystemPresentation=0; // Desktop resets the server, not AppKit's cache.
+            recordPresentation(NSApp,@selector(setPresentationOptions:),protected);
+            check(testSystemPresentation==0,"identical AppKit request alone reproduces stale system policy");
+            npEnsureSystemUI(protected,testSystemPresentation,YES);
+            check(testSystemMode==3 && testSystemOptions==0,"desktop return reapplies hidden system UI without auto-reveal");
+            check(testPresentation==protected,"system repair preserves exact AppKit request");
+        }
+        npRestoreSystemUI();
+        check(testSystemMode==0 && testSystemOptions==0,"deactivation restores saved process UI mode and options");
+        unsigned systemSets=testSystemSets;npRestoreSystemUI();
+        check(testSystemSets==systemSets,"repeated release cannot overwrite another app's UI policy");
+        npEnsureSystemUI(protected,0,NO);
+        check(testSystemSets==systemSets,"background game cannot enforce system UI policy");
+        testPresentationCache=NO;
         method_setImplementation(current,old);
         printf("cursor: %d policy and ownership checks; %d failures\n",checks,failures);
         return failures?1:0;
