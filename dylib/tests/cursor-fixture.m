@@ -114,6 +114,10 @@ int main(int argc, char **argv) {
         [game setFrame:safe display:NO];gl.frame=game.contentView.bounds;
         check(npPresentationTarget(game,YES,nil),"notch-safe fullscreen remains protected");
         [hud removeFromSuperview];
+        [gl removeFromSuperview];
+        check(npPresentationCandidate(nil,game,YES,nil)==game,"owned borderless fullscreen survives renderer replacement");
+        check(!npPresentationTarget(game,YES,nil),"a new non-rendering borderless window cannot acquire protection");
+        [game.contentView addSubview:gl];
         [game setFrame:oldFrame display:NO];
         [gl removeFromSuperview];
         check(!cursorTarget(game,inside,top,YES,nil),"bitmap splash keeps cursor");
