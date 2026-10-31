@@ -45,6 +45,10 @@ int main(int argc, const char **argv) {
         BOOL exitSpace = getenv("NP_DISPLAY_TEST_EXIT") != NULL;
         BOOL gameWindowed = getenv("NP_DISPLAY_TEST_GAME_WINDOWED") != NULL;
         BOOL stayWindowed = getenv("NP_DISPLAY_TEST_STAY_WINDOWED") != NULL;
+        BOOL presentationDrift = getenv("NP_DISPLAY_TEST_PRESENTATION_DRIFT") != NULL;
+        __block BOOL driftInjected = NO;
+        __block unsigned driftCount = 0;
+        __block NSUInteger driftCached = 0, driftSystem = 0;
         __block BOOL dialogUnchanged = NO, dialogClickable = NO;
         __block NSWindowStyleMask originalStyle = 0;
         void (^report)(NSWindow *) = ^(NSWindow *window) {
@@ -67,6 +71,7 @@ int main(int argc, const char **argv) {
                 !(system & (NSApplicationPresentationAutoHideDock | NSApplicationPresentationAutoHideMenuBar));
             NSDictionary *state = @{@"virtual": virtual, @"policy": @(app.activationPolicy), @"physicalWidth": @(actual.size.width),
                 @"physicalHeight": @(actual.size.height), @"physicalUnchanged": @(CGRectEqualToRect(original, actual)),
+                @"driftInjected": @(driftInjected), @"driftCount": @(driftCount), @"driftCached": @(driftCached), @"driftSystem": @(driftSystem),
                 @"presentationProtected": @(protected), @"systemPresentationProtected": @(systemProtected), @"systemPresentation": @(system), @"requestedPresentation": @(presentation), @"active": @(app.isActive), @"key": @(window.isKeyWindow),
                 @"fullscreen": @((window.styleMask & NSWindowStyleMaskFullScreen) != 0),
                 @"windowWidth": @(frame.size.width), @"windowHeight": @(frame.size.height),
@@ -90,6 +95,27 @@ int main(int argc, const char **argv) {
         [[NSNotificationCenter defaultCenter] addObserverForName:NSWindowDidEnterFullScreenNotification object:nil
             queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *note) {
                 dispatch_after(dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC / 2), dispatch_get_main_queue(), ^{
+                    if (presentationDrift) {
+                        __block void (^cycle)(unsigned);
+                        cycle = ^(unsigned remaining) {
+                            int (*resetSystem)(unsigned, unsigned) = dlsym(RTLD_DEFAULT, "SetSystemUIMode");
+                            driftInjected = resetSystem && resetSystem(0,0)==0;
+                            driftCount++;
+                            driftCached = app.presentationOptions;
+                            driftSystem = app.currentSystemPresentationOptions;
+                            dispatch_after(dispatch_time(DISPATCH_TIME_NOW,NSEC_PER_SEC/2),dispatch_get_main_queue(),^{
+                                if (remaining>1) { cycle(remaining-1); return; }
+                                cycle=nil;
+                                if (gameWindowed) {
+                                    NSUInteger style=NSWindowStyleMaskTitled|NSWindowStyleMaskResizable;
+                                    [(WineWindow *)note.object setWindowFeatures:&style];
+                                    [(WineWindow *)note.object setFrameFromWine:NSMakeRect(100,100,800,600)];
+                                } else {report(note.object);[app terminate:nil];}
+                            });
+                        };
+                        cycle(3);
+                        return;
+                    }
                     // Reproduce Wine's late checkTransparency repaint of native chrome.
                     [note.object setBackgroundColor:NSColor.whiteColor];
                     if (gameWindowed) {

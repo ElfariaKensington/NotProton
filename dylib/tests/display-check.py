@@ -33,11 +33,12 @@ class DisplayIntegration(unittest.TestCase):
     def tearDownClass(cls):
         cls.temp.cleanup()
 
-    def probe(self, resolution='', window=False, session=False, exit_space=False, game_windowed=False, stay_windowed=False):
+    def probe(self, resolution='', window=False, session=False, exit_space=False, game_windowed=False, stay_windowed=False, presentation_drift=False):
         env = dict(self.env, NOTPROTON_DISPLAY_RESOLUTION=resolution)
         if exit_space: env['NP_DISPLAY_TEST_EXIT']='1'
         if game_windowed: env['NP_DISPLAY_TEST_GAME_WINDOWED']='1'
         if stay_windowed: env['NP_DISPLAY_TEST_STAY_WINDOWED']='1'
+        if presentation_drift: env['NP_DISPLAY_TEST_PRESENTATION_DRIFT']='1'
         if session:
             env['DYLD_INSERT_LIBRARIES'] = str(ROOT / 'out/game-client.dylib') + ':' + env['DYLD_INSERT_LIBRARIES']
             env['NOTPROTON_GAME_CHANNEL'] = 'com.notproton.display-test.session'
@@ -96,6 +97,24 @@ class DisplayIntegration(unittest.TestCase):
         self.assertTrue(state['presentationProtected'], state)
         self.assertTrue(state['systemPresentationProtected'], state)
         self.assertTrue(state['dialogClickable'], state)
+
+    def test_effective_presentation_recovers_from_system_reset(self):
+        state = self.probe('1920x1080', window=True, presentation_drift=True)
+        self.assertTrue(state['driftInjected'], state)
+        self.assertEqual(state['driftCount'], 3, state)
+        self.assertEqual(state['driftCached'] & 15, 10, state)
+        self.assertEqual(state['driftSystem'] & 15, 0, state)
+        self.assertTrue(state['presentationProtected'] and state['systemPresentationProtected'], state)
+
+    def test_desktop_return_recovery_with_accessory_client(self):
+        state = self.probe('1920x1080', window=True, session=True, presentation_drift=True)
+        self.assertTrue(state['systemPresentationProtected'], state)
+        self.assertEqual(state['driftCount'], 3, state)
+
+    def test_windowed_mode_releases_recovered_system_policy(self):
+        state = self.probe('1920x1080', window=True, presentation_drift=True, game_windowed=True)
+        self.assertTrue(state['gameWindowed'], state)
+        self.assertFalse(state['presentationProtected'] or state['systemPresentationProtected'], state)
 
     def test_rendered_window_does_not_force_fullscreen(self):
         state = self.probe('1920x1080', window=True, stay_windowed=True)
