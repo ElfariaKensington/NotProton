@@ -543,6 +543,29 @@ int main(void) {
     write_var("bridge3.conf", "[bridge3]\nsrc = trees/winefix\ndst = Lib/Wine\nbuild = 26.3.0\n"
                               "remove = X86_64-Windows/NTDLL.DLL\n");
     ok(strstr(vars_json(), "bridge3") == NULL, "or in another case, which APFS takes for the same file");
+    clear_vars();
+    make_asset("trees/upper/x86_64-windows/win32u.dll");
+    make_asset("trees/upper/x86_64-windows/NTDLL.DLL");
+    write_var("upper.conf", "[upper]\nsrc = trees/upper\ndst = lib/wine\nbuild = 26.3.0\n");
+    ok(strstr(vars_json(), "upper") == NULL, "nor a tree spelling it that way");
+
+    puts("== an entitlement only Apple can sign for");
+    clear_vars();
+    make_dir("mkdir -p '%s/Library/Application Support/notproton/runners/"
+             "crossover-26.3.0/CrossOver/bin'%s", g_home, "");
+    make_dir("printf '\\317\\372\\355\\376<key>com.apple.developer.x</key>' > '%s/Library/Application Support/"
+             "notproton/runners/crossover-26.3.0/CrossOver/bin/loader'%s", g_home, "");
+    make_dir("printf 'plain' > '%s/Library/Application Support/notproton/runners/"
+             "crossover-26.3.0/CrossOver/bin/script'%s", g_home, "");
+    make_asset("trees/apple/bin/loader");
+    write_var("apple.conf", "[apple]\nsrc = trees/apple\ndst = .\nbuild = 26.3.0\n");
+    ok(strstr(vars_json(), "{k:\"apple\",l:\"apple\",v:\"apple\",t:[]}") != NULL,
+       "replacing a file holding one is not offered");
+    clear_vars();
+    make_asset("trees/plain/bin/script");
+    write_var("plain.conf", "[plain]\nsrc = trees/plain\ndst = .\nbuild = 26.3.0\n");
+    ok(strstr(vars_json(), "{k:\"plain\",l:\"plain\",v:\"plain\",t:[\"notproton-26.3\"]}") != NULL,
+       "replacing one that doesn't still is");
 
     puts("== links in a tree are not followed");
     clear_vars();

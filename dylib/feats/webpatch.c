@@ -8,11 +8,15 @@
 #include "../util/log.h"
 
 #include <dirent.h>
+#include <fcntl.h>
 #include <pthread.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/mman.h>
 #include <sys/stat.h>
+#include <unistd.h>
 
 #define NP_STR_(x) #x
 #define NP_STR(x) NP_STR_(x)
@@ -754,36 +758,112 @@ static int var_fits(const np_var_t *v, const char *runner, const char *arch) {
     return lands && (!named || matched);
 }
 
-// ntdll.dll carries the Steam bridge patch and ntdll.so has to match it, so variants keep off both and off lsteamclient.
-static int var_bridge_hit(const np_var_t *v, char *hit, size_t size) {
+// APFS ignores case, so NTDLL.DLL is ntdll.dll.
+static int var_bridge_path(const char *land, char *hit, size_t size) {
     static const char *const slots[] = { "x86_64", "i386", "aarch64", "arm64ec" };
     static const char *const files[] = { "windows/ntdll.dll", "windows/lsteamclient.dll",
                                          "unix/ntdll.so", "unix/lsteamclient.so" };
-    char nd[2048], p[256], path[2048];
-    struct stat st;
+    char p[256];
 
-    var_norm(nd, sizeof(nd), v->dst, NULL);
     for (size_t s = 0; s < sizeof(slots) / sizeof(*slots); s++)
         for (size_t f = 0; f < sizeof(files) / sizeof(*files); f++) {
-            const char *rel;
-            size_t n = strlen(nd);
             snprintf(p, sizeof(p), "lib/wine/%s-%s", slots[s], files[f]);
-            for (const char *r = v->removes; *r; r += strlen(r) + 1) {
-                char nr[2048];
-                var_norm(nr, sizeof(nr), nd, r);
-                // APFS ignores case, so NTDLL.DLL is ntdll.dll.
-                if (strcasecmp(nr, p) == 0) { snprintf(hit, size, "%s", p); return 1; }
-            }
-            if (!n) rel = p;
-            else if (strncasecmp(p, nd, n) == 0 && p[n] == '/') rel = p + n + 1;
-            else continue;
-            if (snprintf(path, sizeof(path), "%s/%s", v->src, rel) >= (int)sizeof(path)) continue;
-            if (lstat(path, &st) == 0 && S_ISREG(st.st_mode)) {
-                snprintf(hit, size, "%s", p);
-                return 1;
-            }
+            if (strcasecmp(land, p) == 0) { snprintf(hit, size, "%s", p); return 1; }
         }
     return 0;
+}
+
+// A tree on a case-sensitive volume can't be probed by name, so every file gets read.
+static int var_bridge_walk(const np_var_t *v, const char *rel, int depth, char *hit, size_t size) {
+    char dir[2048], path[2048], land[2048], at[4096];
+    struct dirent *de;
+    struct stat st;
+    DIR *d;
+    int found = 0;
+
+    if (depth > 16) return 0;
+    snprintf(dir, sizeof(dir), "%s%s%s", v->src, *rel ? "/" : "", rel);
+    if (!(d = opendir(dir))) return 0;
+    while (!found && (de = readdir(d))) {
+        if (de->d_name[0] == '.') continue;
+        if (snprintf(path, sizeof(path), "%s%s%s", rel, *rel ? "/" : "", de->d_name) >= (int)sizeof(path)) continue;
+        snprintf(at, sizeof(at), "%s/%s", v->src, path);
+        if (lstat(at, &st) != 0) continue;
+        if (S_ISDIR(st.st_mode)) found = var_bridge_walk(v, path, depth + 1, hit, size);
+        else if (S_ISREG(st.st_mode)) {
+            var_norm(land, sizeof(land), v->dst, path);
+            found = var_bridge_path(land, hit, size);
+        }
+    }
+    closedir(d);
+    return found;
+}
+
+// ntdll.dll carries the Steam bridge patch and ntdll.so has to match it, so variants keep off both and off lsteamclient.
+static int var_bridge_hit(const np_var_t *v, char *hit, size_t size) {
+    char nd[2048], nr[2048];
+
+    var_norm(nd, sizeof(nd), v->dst, NULL);
+    for (const char *r = v->removes; *r; r += strlen(r) + 1) {
+        var_norm(nr, sizeof(nr), nd, r);
+        if (var_bridge_path(nr, hit, size)) return 1;
+    }
+    return var_bridge_walk(v, "", 0, hit, size);
+}
+
+// Ad-hoc signing can't carry these, and they sit in the signature blob as plain XML.
+static int var_macho_restricted(const char *path) {
+    static const char want[] = "<key>com.apple.developer.";
+    struct stat st;
+    uint32_t magic = 0;
+    void *map;
+    int fd, found = 0;
+
+    if ((fd = open(path, O_RDONLY)) < 0) return 0;
+    if (fstat(fd, &st) == 0 && st.st_size > 4 && read(fd, &magic, 4) == 4
+        && (magic == 0xfeedfacf || magic == 0xcffaedfe || magic == 0xfeedface
+            || magic == 0xcefaedfe || magic == 0xcafebabe || magic == 0xbebafeca)) {
+        map = mmap(NULL, (size_t)st.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
+        if (map != MAP_FAILED) {
+            found = memmem(map, (size_t)st.st_size, want, sizeof(want) - 1) != NULL;
+            munmap(map, (size_t)st.st_size);
+        }
+    }
+    close(fd);
+    return found;
+}
+
+// The launch refuses these, so offering one is a row that only ever falls back.
+static int var_apple_hit(const np_var_t *v, const char *runner, const char *rel, int depth,
+                         char *hit, size_t size) {
+    char dir[2048], path[2048], land[2048], at[4096];
+    struct dirent *de;
+    struct stat st;
+    DIR *d;
+    int found = 0;
+
+    if (depth > 16) return 0;
+    snprintf(dir, sizeof(dir), "%s%s%s", v->src, *rel ? "/" : "", rel);
+    if (!(d = opendir(dir))) return 0;
+    while (!found && (de = readdir(d))) {
+        if (de->d_name[0] == '.') continue;
+        if (snprintf(path, sizeof(path), "%s%s%s", rel, *rel ? "/" : "", de->d_name) >= (int)sizeof(path)) continue;
+        snprintf(at, sizeof(at), "%s/%s", v->src, path);
+        if (lstat(at, &st) != 0) continue;
+        if (S_ISDIR(st.st_mode)) {
+            found = var_apple_hit(v, runner, path, depth + 1, hit, size);
+            continue;
+        }
+        if (!S_ISREG(st.st_mode)) continue;
+        var_norm(land, sizeof(land), v->dst, path);
+        snprintf(at, sizeof(at), "%s/CrossOver/%s", runner, land);
+        if (stat(at, &st) == 0 && S_ISREG(st.st_mode) && var_macho_restricted(at)) {
+            snprintf(hit, size, "%s", land);
+            found = 1;
+        }
+    }
+    closedir(d);
+    return found;
 }
 
 typedef struct { np_var_t *list; int count; const char *home; } var_ctx_t;
@@ -870,6 +950,11 @@ static void var_build(void) {
                 if (!unpinned++)
                     NP_WARN("variants: %s replaces %s, which is Wine's own, and names no build, not offered there",
                             list[i].name, hit);
+                continue;
+            }
+            if (var_apple_hit(&list[i], runner, "", 0, hit, sizeof(hit))) {
+                NP_WARN("variants: %s replaces %s, which holds an entitlement only Apple can sign for, not offered there",
+                        list[i].name, hit);
                 continue;
             }
             snprintf(tools + strlen(tools), sizeof(tools) - strlen(tools), "%s\"%s\"",

@@ -556,6 +556,7 @@ PLIST
   : > "$work/log"
   ok "replacing a file with an Apple-only entitlement falls back" "$(resolve 'signed')" "$base"
   logged "and says why" "would replace a file holding an entitlement only Apple can sign for"
+  ok "without cloning a runner to find out" "$(grep -c 'building crossover-26.3+signed' "$work/log" || true)" "0"
 else
   echo "  skip  no cc to make a Mach-O with"
 fi
@@ -662,6 +663,80 @@ CONF
 stage both "$pfx"
 ok "a Rosetta prefix gets the x86_64 copy" \
   "$(prefixed "$pfx/drive_c/windows/system32/bothmod.dll")" "Wine builtin DLLx64"
+
+echo "== file names in another case"
+mkdir -p "$work/trees/upper/x86_64-windows"
+dll "$work/trees/upper/x86_64-windows/ok.dll" ok
+dll "$work/trees/upper/x86_64-windows/NTDLL.DLL" bad
+desc upper <<CONF
+src = trees/upper
+dst = lib/wine
+build = 26.3
+CONF
+: > "$work/log"
+ok "an upper-case ntdll falls back" "$(resolve 'upper')" "$base"
+logged "and names it" "would change lib/wine/x86_64-windows/ntdll.dll"
+mkdir -p "$work/trees/nomark/x86_64-windows"
+native_dll "$work/trees/nomark/x86_64-windows/FOO.DLL"
+desc nomark <<CONF
+src = trees/nomark
+dst = lib/dxmt
+CONF
+: > "$work/log"
+ok "an upper-case DLL with no builtin mark falls back" "$(resolve 'nomark')" "$base"
+logged "and says why" "is not marked as a Wine builtin"
+if command -v cc > /dev/null 2>&1; then
+  mkdir -p "$work/trees/ext/x86_64-unix"
+  printf 'int main(void) { return 0; }\n' > "$work/ext.c"
+  cc -o "$work/trees/ext/x86_64-unix/libfoo.so.1" "$work/ext.c"
+  codesign --remove-signature "$work/trees/ext/x86_64-unix/libfoo.so.1"
+  desc ext <<CONF
+src = trees/ext
+dst = lib/dxmt
+CONF
+  got=$(resolve 'ext')
+  ok "a Mach-O named libfoo.so.1 is signed" \
+    "$(codesign -v "$got/lib/dxmt/x86_64-unix/libfoo.so.1" 2>/dev/null && echo valid)" "valid"
+else
+  echo "  skip  no cc to make a Mach-O with"
+fi
+
+echo "== cleaning up old builds"
+mkdir -p "$work/trees/gc/x86_64-windows"
+dll "$work/trees/gc/x86_64-windows/gc.dll" one
+desc gc <<CONF
+src = trees/gc
+dst = lib/dxmt
+CONF
+resolve gc > /dev/null
+old=$(newest gc); old=${old%/CrossOver}
+dll "$work/trees/gc/x86_64-windows/gc.dll" twotwo
+touch -t 202001010000 "$old/.notproton-used"
+mkdir -p "$work/failps" "$work/keeprm"
+printf '#!/bin/sh\nexit 1\n' > "$work/failps/ps"
+cat > "$work/keeprm/rm" <<'FAKE'
+#!/bin/sh
+case "$*" in *.removing*) exit 1 ;; esac
+exec /bin/rm "$@"
+FAKE
+chmod +x "$work/failps/ps" "$work/keeprm/rm"
+( PATH="$work/failps:$PATH"; resolve gc > /dev/null )
+ok "a ps that fails keeps the old build" "$([ -d "$old" ] && echo kept)" "kept"
+touch -t 202001010000 "$old/.notproton-used"
+( PATH="$work/keeprm:$PATH"; resolve gc > /dev/null )
+ok "a cleanup killed partway leaves no build under the old name" "$([ -e "$old" ] || echo gone)" "gone"
+trash="$work/runners/.${old##*/}.removing"
+ok "only its hidden trash" "$([ -d "$trash" ] && echo there)" "there"
+scratch="$work/runners/.crossover-26.3+gc@deadbeef0000"
+mkdir -p "$scratch.new" "$scratch.old"
+( exec 7>> "$work/runners/.crossover-26.3+gc.lock"; /usr/bin/lockf -s -t 0 7; sleep 3 ) &
+held=$!
+sleep 1
+resolve gc > /dev/null
+ok "leftovers stay while a build holds the lock" "$([ -d "$scratch.new" ] && echo kept)" "kept"
+wait "$held"
+resolve gc > /dev/null
+ok "and go once it doesn't" "$([ -e "$scratch.new" ] || [ -e "$scratch.old" ] || [ -e "$trash" ] || echo gone)" "gone"
 
 [ "$fail" -eq 0 ] || exit 1
 echo "==> runnervariantcheck: variants build on demand, refuse bad trees and fall back"

@@ -497,17 +497,16 @@ $np_v_nr" in
 $np_v_p
 "*) printf '%s' "$np_v_p"; return 0 ;;
       esac
-      case "$np_v_p" in
-        ("$np_v_nd"/*) np_v_r=${np_v_p#"$np_v_nd"/} ;;
-        (*) [ -z "$np_v_nd" ] || continue; np_v_r=$np_v_p ;;
-      esac
-      if [ -f "$1/$np_v_r" ] && [ ! -L "$1/$np_v_r" ]; then
-        printf '%s' "$np_v_p"
-        return 0
-      fi
     done
   done
-  return 1
+  # A tree on a case-sensitive volume can't be probed by name, so every file gets read.
+  np_v_p=$( ( cd "$1" && find . -name '.?*' -prune -o -type f -print ) |
+    awk -v d="$np_v_nd" '{
+      sub(/^\.\//, ""); p = tolower(d == "" ? $0 : d "/" $0)
+      if (p ~ /^lib\/wine\/(x86_64|i386|aarch64|arm64ec)-(windows\/(ntdll|lsteamclient)\.dll|unix\/(ntdll|lsteamclient)\.so)$/) { print p; exit }
+    }')
+  [ -n "$np_v_p" ] || return 1
+  printf '%s' "$np_v_p"
 }
 
 # Requested names, split on +, sorted so a combination is named and overlaid the same way
@@ -592,7 +591,8 @@ np_variant_layout_of() {
 # live session and the tree under it must not move.
 np_variant_busy() {
   # shellcheck disable=SC2009 # pgrep matches arguments; the executable path is the signal
-  ps -axww -o comm= 2>/dev/null | grep -qF "$1/"
+  np_v_ps=$(ps -axww -o comm= 2>/dev/null) || return 0
+  printf '%s\n' "$np_v_ps" | grep -qF "$1/"
 }
 
 # winebuild --builtin writes this over the DOS stub, and it is the whole reason a tree can
@@ -685,14 +685,11 @@ NP_V_REMOVES
     np_v_laid=0
     while IFS= read -r np_v_rel; do
       np_v_at="$np_v_root/CrossOver/$np_v_dst/$np_v_rel"
-      # PE files are never Mach-O, so only the other names get opened to check.
+      # A DLL is never Mach-O, and everything else gets opened to check.
       np_v_ent=""
-      np_v_signable=0
-      case "${np_v_rel##*/}" in
-        (*.so | *.dylib | *.bundle) np_v_signable=1 ;;
-        (*.*) ;;
-        (*) np_v_signable=1 ;;
-      esac
+      np_v_lc=$(printf '%s' "${np_v_rel##*/}" | tr '[:upper:]' '[:lower:]')
+      np_v_signable=1
+      case "$np_v_lc" in (*.dll) np_v_signable=0 ;; esac
       np_v_was="$np_support/runners/crossover-$np_build/CrossOver/$np_v_dst/$np_v_rel"
       if [ "$np_v_signable" = 1 ] && [ -f "$np_v_was" ] && np_variant_macho "$np_v_was"; then
         np_v_ent=$(/usr/bin/codesign -d --entitlements - --xml "$np_v_was" 2>/dev/null) || np_v_ent=""
@@ -707,7 +704,7 @@ NP_V_REMOVES
       fi
       cp -c "$np_v_src/$np_v_rel" "$np_v_at" 2>/dev/null \
         || cp "$np_v_src/$np_v_rel" "$np_v_at" || return 1
-      case "$np_v_rel" in
+      case "$np_v_lc" in
         *.dll)
           if ! np_variant_builtin "$np_v_at"; then
             np_variant_say "$np_v_name/$np_v_rel is not marked as a Wine builtin, so it would load as native and fail; $np_v_name is refused"
@@ -733,6 +730,25 @@ NP_V_REMOVES
   done
   rm -f "$np_v_root/.np-laid"
   return 0
+}
+
+# Found before the clone, or a variant that can never build costs a whole runner copy every launch.
+np_variant_apple_hit() {
+  np_v_abase="$np_support/runners/crossover-$np_build/CrossOver"
+  for np_v_name in $1; do
+    np_variant_read "$np_v_name" || continue
+    np_v_ah=$( ( cd "$np_v_src" && find . -name '.?*' -prune -o -type f -print ) |
+      while IFS= read -r np_v_rel; do
+        np_v_rel=${np_v_rel#./}
+        np_v_was="$np_v_abase/$np_v_dst/$np_v_rel"
+        [ -f "$np_v_was" ] || continue
+        np_variant_macho "$np_v_was" || continue
+        case "$(/usr/bin/codesign -d --entitlements - --xml "$np_v_was" 2>/dev/null || true)" in
+          (*'<key>com.apple.developer.'*) printf '%s/%s' "$np_v_name" "$np_v_rel"; break ;;
+        esac
+      done)
+    [ -z "$np_v_ah" ] || { printf '%s' "$np_v_ah"; return 0; }
+  done
 }
 
 # Builds into a scratch directory and moves it in, so a failure leaves the previous build
@@ -778,6 +794,11 @@ np_variant_build() (
   fi
 
   rm -rf "$np_v_new" "$np_v_old"
+  np_v_hit=$(np_variant_apple_hit "$np_v_names")
+  if [ -n "$np_v_hit" ]; then
+    np_variant_say "$np_v_hit would replace a file holding an entitlement only Apple can sign for, so it is refused"
+    exit 1
+  fi
   np_variant_say "building ${np_v_target##*/} from $np_v_names"
   if ! { cp -c -R "$np_v_base" "$np_v_new" 2>/dev/null || cp -R "$np_v_base" "$np_v_new"; } \
      || ! np_variant_overlay "$np_v_new" "$np_v_names" \
@@ -818,13 +839,30 @@ np_variant_last_good() {
 
 # Ten minutes covers a launch that resolved an old build but hasn't started Wine from it yet.
 np_variant_gc() {
+  np_variant_sweep "$1"
   for np_v_old in "$1"@*; do
     [ -d "$np_v_old" ] && [ "$np_v_old" != "$2" ] || continue
     [ -z "$(find "$np_v_old/.notproton-used" -mmin -10 2>/dev/null)" ] || continue
     np_variant_busy "$np_v_old" && continue
-    rm -rf "$np_v_old" && np_variant_say "removed ${np_v_old##*/}, which nothing uses any more"
+    # Renamed first, so a kill partway can't leave half a runner under a name that gets reused.
+    np_v_trash="${np_v_old%/*}/.${np_v_old##*/}.removing"
+    mv "$np_v_old" "$np_v_trash" 2>/dev/null || continue
+    rm -rf "$np_v_trash" && np_variant_say "removed ${np_v_old##*/}, which nothing uses any more"
   done
 }
+
+# What a killed build or cleanup left behind. Only touched with the build lock held, or it could be a live build's.
+np_variant_sweep() (
+  np_v_sw="${1%/*}/.${1##*/}"
+  for np_v_s in "$np_v_sw"@*.new "$np_v_sw"@*.old "$np_v_sw"@*.removing; do
+    [ -e "$np_v_s" ] || continue
+    [ ! -L "$np_v_sw.lock" ] || exit 0
+    exec 7>> "$np_v_sw.lock" || exit 0
+    /usr/bin/lockf -s -t 0 7 || exit 0
+    rm -rf "$np_v_sw"@*.new "$np_v_sw"@*.old "$np_v_sw"@*.removing
+    exit 0
+  done
+)
 
 # One name in a request that has lost its descriptor must not take the rest with it: the
 # panel keeps a launch option a game already carries, and a game outlives a descriptor.
