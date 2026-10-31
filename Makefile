@@ -643,7 +643,7 @@ $(GAME_DISPLAY): helpers/game-display.m dylib/feats/displayconfig.h
 GAME_CURSOR := $(OUT_DIR)/game-cursor.dylib
 .PHONY: game-cursor cursor-check
 game-cursor: $(GAME_CURSOR)
-$(GAME_CURSOR): helpers/game-cursor.m
+$(GAME_CURSOR): helpers/game-cursor.m helpers/game-presentation.h
 	@mkdir -p $(OUT_DIR)
 	$(CC) -arch arm64 -arch x86_64 -mmacosx-version-min=$(MIN_VER) $(AVAIL) \
 		-fobjc-arc -O2 -Wall -Wextra -framework AppKit -framework QuartzCore \
