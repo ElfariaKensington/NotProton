@@ -203,7 +203,7 @@ __attribute__((constructor)) static void setupCursor(void) {
     @autoreleasepool {
         // Capture argv before Wine rewrites it. No hooks in Wine helpers or native apps.
         BOOL game = gameProcess();
-        fprintf(stderr, "NotProton game helpers v2: pid=%d game=%d\n", getpid(), game);
+        fprintf(stderr, "NotProton game helpers v3: pid=%d game=%d\n", getpid(), game);
         if (!game) return;
         dispatch_async(dispatch_get_main_queue(), ^{
             transparentCursor = makeTransparentCursor();
