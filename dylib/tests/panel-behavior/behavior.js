@@ -28,6 +28,8 @@ for (const form of Object.keys(FORMS)) {
        'including on the mac builds that tool is for');
   t.ok(P({ details: details('', { strCompatToolName: 'notproton-26.3' }) }) !== null,
        'while one of ours still renders');
+  t.ok(panel(emit, form, undefined, { tools: [] }).render({ details: details('', { strCompatToolName: '' }) }) !== null,
+       'an unpinned game renders with no tool list');
 
   // For a tool we did not install there is no run script of ours in the launch, so the
   // panel writes what that script would have exported: the dylib on the insert list and

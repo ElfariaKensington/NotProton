@@ -6,7 +6,7 @@ SRC="${1:-$(dirname "$0")/../feats/compat_run.sh}"
 [ -f "$SRC" ] || { echo "envpasscheck: $SRC not present, skipped"; exit 0; }
 
 # The reserved names are shared with the plugin loop, so that comes along with it.
-block=$(sed -n '/^np_env_reserved() {/,/^}$/p; /^np_env_passed=/,/^done$/p' "$SRC")
+block=$(sed -n '/^np_conf_has() {/,/^}$/p; /^np_conf_values() {/,/^}$/p; /^np_feat_for_tool() {/,/^}$/p; /^np_env_reserved() {/,/^}$/p; /^np_env_passed=/,/^done$/p' "$SRC")
 case "$block" in
   *np_env_reserved*NOTPROTON_ENV_*) ;;
   *) echo "FAIL: the passthrough loop was not found in $SRC"; exit 1 ;;
@@ -50,6 +50,12 @@ ok "a name the script uses itself reaches the game as given" \
   "$(forwarded NOTPROTON_ENV_name=HELLO NOTPROTON_ENV_log=x)" "log=x name=HELLO "
 ok "a refusal does not stop the rest" \
   "$(forwarded NOTPROTON_ENV_CX_ROOT=x NOTPROTON_ENV_KEEP=yes)" "KEEP=yes "
+
+scoped="$(printf 'NOTPROTON_ENV_SCOPED\tlabel\tS\nNOTPROTON_ENV_SCOPED\ttools\tnotproton-fex*')"
+ok "a row for another tool stays out" \
+  "$(forwarded np_conf_feat_table="$scoped" np_tool_name=notproton-26.3 NOTPROTON_ENV_SCOPED=1 NOTPROTON_ENV_KEEP=yes)" "KEEP=yes "
+ok "a row for this tool goes through" \
+  "$(forwarded np_conf_feat_table="$scoped" np_tool_name=notproton-fex NOTPROTON_ENV_SCOPED=1)" "SCOPED=1 "
 
 # The name comes out of a sed capture, so anything that is not a C identifier never
 # reaches the eval below it.

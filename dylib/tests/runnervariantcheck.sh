@@ -641,5 +641,27 @@ ok "and nothing is invented for the missing directory" \
 stage '' "$pfx"
 ok "no variant registers nothing" "$(grep -c registered "$work/log" || true)" "0"
 
+dll "$work/trees/pair/x86_64-windows/newmod.dll" src64v2
+stage pair "$pfx"
+ok "a rebuild refreshes what it registered" \
+  "$(prefixed "$pfx/drive_c/windows/system32/newmod.dll")" "Wine builtin DLLsrc64v2"
+ok "and still leaves the prefix's own file" \
+  "$(prefixed "$pfx/drive_c/windows/system32/d3d11.dll")" ""
+ok "with no temp file left behind" "$(ls "$pfx/drive_c/windows/system32" | grep -c np-stage || true)" "0"
+
+mkdir -p "$base/lib/dxmt/aarch64-windows"
+mkdir -p "$work/trees/both/x86_64-windows" "$work/trees/both/aarch64-windows"
+dll "$work/trees/both/x86_64-windows/bothmod.dll" x64
+dll "$work/trees/both/aarch64-windows/bothmod.dll" arm64
+desc both <<CONF
+label = Both
+variant = Backend
+src = trees/both
+dst = lib/dxmt
+CONF
+stage both "$pfx"
+ok "a Rosetta prefix gets the x86_64 copy" \
+  "$(prefixed "$pfx/drive_c/windows/system32/bothmod.dll")" "Wine builtin DLLx64"
+
 [ "$fail" -eq 0 ] || exit 1
 echo "==> runnervariantcheck: variants build on demand, refuse bad trees and fall back"

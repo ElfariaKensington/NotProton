@@ -884,11 +884,19 @@ np_variant_resolve() {
 # every DLL a variant merely replaces.
 np_variant_stage_prefix() {
   [ -n "$np_variant_used" ] || return 0
+  np_v_want=$(np_variant_arch)
   for np_v_name in $np_variant_used; do
     np_variant_read "$np_v_name" || continue
     for np_v_from in "$np_v_src"/*-windows/*.dll; do
       [ -f "$np_v_from" ] || continue
       np_v_rel=${np_v_from#"$np_v_src"/}
+      # The runner holds every architecture, the prefix only takes the one this tool runs.
+      np_v_d_arch=$(np_variant_dir_arch "${np_v_rel%%/*}")
+      case "$np_v_d_arch" in
+        (i386) ;;
+        (arm64ec) [ "$np_v_want" = aarch64 ] || continue ;;
+        (*) [ "$np_v_d_arch" = "$np_v_want" ] || continue ;;
+      esac
       case "$np_v_rel" in
         (i386-windows/*) np_v_into="$WINEPREFIX/drive_c/windows/syswow64" ;;
         (*) np_v_into="$WINEPREFIX/drive_c/windows/system32" ;;
@@ -898,10 +906,18 @@ np_variant_stage_prefix() {
       np_v_live="$CX_ROOT/$np_v_dst/$np_v_rel"
       [ -f "$np_v_live" ] && [ -d "$np_v_into" ] || continue
       np_v_reg="$np_v_into/${np_v_rel##*/}"
-      [ ! -e "$np_v_reg" ] || continue
-      if cp -f "$np_v_live" "$np_v_reg"; then
+      np_v_mark="${np_v_into##*/}/${np_v_rel##*/}"
+      # Only a file registered here is ours to refresh after a rebuild.
+      if [ -e "$np_v_reg" ]; then
+        grep -qxF "$np_v_mark" "$WINEPREFIX/.notproton-variant-modules" 2>/dev/null || continue
+        ! cmp -s "$np_v_live" "$np_v_reg" || continue
+      fi
+      if cp -f "$np_v_live" "$np_v_reg.np-stage.$$" && mv -f "$np_v_reg.np-stage.$$" "$np_v_reg"; then
+        grep -qxF "$np_v_mark" "$WINEPREFIX/.notproton-variant-modules" 2>/dev/null ||
+          echo "$np_v_mark" >> "$WINEPREFIX/.notproton-variant-modules" || true
         np_variant_say "$np_v_name: registered ${np_v_rel##*/} in ${np_v_into##*/}"
       else
+        rm -f "$np_v_reg.np-stage.$$"
         np_variant_say "$np_v_name: could not register ${np_v_rel##*/} in ${np_v_into##*/}"
       fi
     done
@@ -920,6 +936,7 @@ if [ -n "$np_variant" ]; then
     np_variant=""
     np_variant_key=""
     np_variant_layout=""
+    np_variant_used=""
   fi
 fi
 export CX_ROOT
@@ -2231,8 +2248,6 @@ if [ -n "$STEAM_COMPAT_DATA_PATH" ]; then
   without_lock_fds "$WINESERVER" -k >> "$log" 2>&1 || true
   stage_step="prefix seed"
   seed_prefix_from_template
-  stage_step="variant modules"
-  np_variant_stage_prefix
   stage_step="profile layout"
   if ! lay_out_proton_profile; then
     show_alert "Saved-game folders need attention" "NotProton left the conflicting files in place. Open this prefix's notproton-run.log for details before trying again."
@@ -2245,6 +2260,8 @@ if [ -n "$STEAM_COMPAT_DATA_PATH" ]; then
   import_prefix_settings
   stage_step="fonts"
   link_fonts
+  stage_step="variant modules"
+  np_variant_stage_prefix
   # A prefix that Wine built just now only has dosdevices from this point on.
   stage_step="game drive"
   map_game_drive
@@ -2863,6 +2880,11 @@ done
 np_env_passed=$(env | LC_ALL=C sed -nE 's/^NOTPROTON_ENV_([A-Za-z_][A-Za-z0-9_]*)=.*/\1/p' \
   | LC_ALL=C sort)
 for name in $np_env_passed; do
+  # A row hidden under this tool can't be switched off, so its value stays out too.
+  if np_conf_has "$np_conf_feat_table" "NOTPROTON_ENV_$name" && ! np_feat_for_tool "NOTPROTON_ENV_$name"; then
+    echo "=== NOTPROTON_ENV_$name is not for $np_tool_name, ignored ===" >> "$log" 2>&1 || true
+    continue
+  fi
   if np_env_reserved "$name"; then
     echo "=== NOTPROTON_ENV_$name would replace a setting this launch sets itself, ignored ===" \
       >> "$log" 2>&1 || true

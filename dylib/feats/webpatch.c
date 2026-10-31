@@ -1313,7 +1313,7 @@ static int out_expand(np_out_t *o, const char *replace, const np_cap_t *caps) {
     "if(t.unAppID<2147483648&&(t.vecPlatforms||[]).indexOf(\"osx\")>=0" \
     "&&!t.strCompatToolName)return null;" \
     "return MSCXPanel({fex,get:G,saved:g,set:L.s,clearUnused:1,dev:1,tool:tn," \
-    "ours:" NP_OUR_TOOLS ".indexOf(tn)>=0," \
+    "ours:tn===\"" NP_FALLBACK_TOOL "\"||" NP_OUR_TOOLS ".indexOf(tn)>=0," \
     "dflt:lost?null:k=>DF[k],head:" \
     "typeof MSCXPrefixRow==\"function\"&&(0," RT ".jsx)(\"div\",{className:\"MSCXRow\",ref:e=>e&&MSCXPrefixRow(e,t.unAppID)},\"npstate\")" \
     "})}"

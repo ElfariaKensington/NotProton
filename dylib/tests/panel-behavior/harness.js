@@ -47,7 +47,7 @@ function panel(emit, form, globals = { document: { documentElement: { lang: 'en'
   // A build the page was given is a tool the install carries, as it is in a real one,
   // where the settings page lists a subset of what the compatibility folder holds.
   env.NP_TEST_TOOLS = [...new Set([...tools, ...(globals.MSCXBuilds || []).map(b => b && b.id),
-                                   fallback, ...fexTools])].filter(Boolean).join(',');
+                                   ...fexTools])].filter(Boolean).join(',');
   const raw = execFileSync(emit, [form + (data ? '-data' : ''), fallback, ...fexTools],
                            { encoding: 'utf8', env }).trim();
   const barrel = barrelFor(emit);
