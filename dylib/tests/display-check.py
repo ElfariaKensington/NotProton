@@ -70,6 +70,7 @@ class DisplayIntegration(unittest.TestCase):
         state = self.probe('1920x1080', window=True)
         self.assertTrue(state['fullscreen'] and state['fullscreenInput'], state)
         self.assertTrue(state['presentationProtected'], state)
+        self.assertTrue(state['systemPresentationProtected'], state)
         self.assertTrue(state['dialogUnchanged'] and state['dialogClickable'], state)
         self.assertTrue(state['backgroundBlack'] and state['canvasBlack'], state)
         self.assertTrue(state['separatorHidden'] and state['titleHidden'], state)
@@ -82,6 +83,7 @@ class DisplayIntegration(unittest.TestCase):
         state = self.probe('1920x1080', window=True, session=True)
         self.assertTrue(state['fullscreen'] and state['fullscreenInput'], state)
         self.assertTrue(state['presentationProtected'], state)
+        self.assertTrue(state['systemPresentationProtected'], state)
         self.assertTrue(state['dialogUnchanged'] and state['dialogClickable'], state)
         self.assertTrue(state['backgroundBlack'] and state['canvasBlack'], state)
         self.assertTrue(state['separatorHidden'] and state['titleHidden'], state)
@@ -92,6 +94,7 @@ class DisplayIntegration(unittest.TestCase):
         state = self.probe('2560x1600', window=True)
         self.assertTrue(state['fullscreen'] and state['fullscreenInput'], state)
         self.assertTrue(state['presentationProtected'], state)
+        self.assertTrue(state['systemPresentationProtected'], state)
         self.assertTrue(state['dialogClickable'], state)
 
     def test_rendered_window_does_not_force_fullscreen(self):

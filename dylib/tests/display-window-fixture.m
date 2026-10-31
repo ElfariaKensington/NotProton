@@ -62,9 +62,12 @@ int main(int argc, const char **argv) {
             NSApplicationPresentationOptions presentation=app.presentationOptions;
             BOOL protected=(presentation & NSApplicationPresentationHideDock) && (presentation & NSApplicationPresentationHideMenuBar) &&
                 !(presentation & (NSApplicationPresentationAutoHideDock | NSApplicationPresentationAutoHideMenuBar));
+            NSApplicationPresentationOptions system=app.currentSystemPresentationOptions;
+            BOOL systemProtected=(system & NSApplicationPresentationHideDock) && (system & NSApplicationPresentationHideMenuBar) &&
+                !(system & (NSApplicationPresentationAutoHideDock | NSApplicationPresentationAutoHideMenuBar));
             NSDictionary *state = @{@"virtual": virtual, @"policy": @(app.activationPolicy), @"physicalWidth": @(actual.size.width),
                 @"physicalHeight": @(actual.size.height), @"physicalUnchanged": @(CGRectEqualToRect(original, actual)),
-                @"presentationProtected": @(protected), @"active": @(app.isActive), @"key": @(window.isKeyWindow),
+                @"presentationProtected": @(protected), @"systemPresentationProtected": @(systemProtected), @"systemPresentation": @(system), @"requestedPresentation": @(presentation), @"active": @(app.isActive), @"key": @(window.isKeyWindow),
                 @"fullscreen": @((window.styleMask & NSWindowStyleMaskFullScreen) != 0),
                 @"windowWidth": @(frame.size.width), @"windowHeight": @(frame.size.height),
                 @"canvasWidth": @(canvas.size.width), @"canvasHeight": @(canvas.size.height),
