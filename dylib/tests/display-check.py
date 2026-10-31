@@ -27,7 +27,7 @@ class DisplayIntegration(unittest.TestCase):
                 CFBundlePackageType='APPL', CFBundleIdentifier='com.notproton.display-test',
                 LSApplicationCategoryType='public.app-category.games', NSHighResolutionCapable=True), f)
         cls.env = dict(os.environ, NP_DISPLAY_TEST_DRIVER=str(cls.root / 'winemac.so'),
-                       DYLD_INSERT_LIBRARIES=os.environ.get('NP_DISPLAY_TEST_HELPER', str(ROOT / 'out/game-display.dylib')))
+                       DYLD_INSERT_LIBRARIES=os.environ.get('NP_CURSOR_TEST_HELPER', str(ROOT / 'out/game-cursor.dylib')) + ':' + os.environ.get('NP_DISPLAY_TEST_HELPER', str(ROOT / 'out/game-display.dylib')))
 
     @classmethod
     def tearDownClass(cls):
@@ -69,6 +69,7 @@ class DisplayIntegration(unittest.TestCase):
     def test_native_fullscreen_space_preserves_real_display(self):
         state = self.probe('1920x1080', window=True)
         self.assertTrue(state['fullscreen'] and state['fullscreenInput'], state)
+        self.assertTrue(state['presentationProtected'], state)
         self.assertTrue(state['dialogUnchanged'] and state['dialogClickable'], state)
         self.assertTrue(state['backgroundBlack'] and state['canvasBlack'], state)
         self.assertTrue(state['separatorHidden'] and state['titleHidden'], state)
@@ -80,6 +81,7 @@ class DisplayIntegration(unittest.TestCase):
     def test_fullscreen_with_single_icon_client(self):
         state = self.probe('1920x1080', window=True, session=True)
         self.assertTrue(state['fullscreen'] and state['fullscreenInput'], state)
+        self.assertTrue(state['presentationProtected'], state)
         self.assertTrue(state['dialogUnchanged'] and state['dialogClickable'], state)
         self.assertTrue(state['backgroundBlack'] and state['canvasBlack'], state)
         self.assertTrue(state['separatorHidden'] and state['titleHidden'], state)
@@ -89,16 +91,19 @@ class DisplayIntegration(unittest.TestCase):
     def test_input_at_2560_by_1600(self):
         state = self.probe('2560x1600', window=True)
         self.assertTrue(state['fullscreen'] and state['fullscreenInput'], state)
+        self.assertTrue(state['presentationProtected'], state)
         self.assertTrue(state['dialogClickable'], state)
 
     def test_rendered_window_does_not_force_fullscreen(self):
         state = self.probe('1920x1080', window=True, stay_windowed=True)
         self.assertFalse(state['fullscreen'], state)
         self.assertTrue(state['gameWindowed'], state)
+        self.assertFalse(state['presentationProtected'], state)
 
     def test_game_can_switch_to_windowed_mode(self):
         state = self.probe('1920x1080', window=True, game_windowed=True)
         self.assertTrue(state['gameWindowed'], state)
+        self.assertFalse(state['presentationProtected'], state)
         self.assertFalse(state['fullscreen'], state)
 
     def test_exit_restores_window_chrome(self):

@@ -627,7 +627,7 @@ game-session-check: game-session $(OUT_DIR)/game-session-fixture
 
 GAME_DISPLAY := $(OUT_DIR)/game-display.dylib
 .PHONY: game-display display-check
-display-check: game-display $(GAME_CLIENT)
+display-check: game-display $(GAME_CLIENT) game-cursor
 	python3 dylib/tests/display-launch-check.py
 	python3 dylib/tests/display-check.py
 

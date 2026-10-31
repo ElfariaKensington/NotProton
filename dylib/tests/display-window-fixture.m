@@ -59,8 +59,12 @@ int main(int argc, const char **argv) {
                 [input[@"warpMatches"] boolValue] && [input[@"scrollMatches"] boolValue] && [input[@"captureRestored"] boolValue] && fabs([input[@"x"] doubleValue] - targetWidth*.8) < 1 &&
                 fabs([input[@"y"] doubleValue] - targetHeight*.75) < 1;
             NSColor *canvasColor = window.contentView.layer.backgroundColor ? [NSColor colorWithCGColor:window.contentView.layer.backgroundColor] : nil;
+            NSApplicationPresentationOptions presentation=app.presentationOptions;
+            BOOL protected=(presentation & NSApplicationPresentationHideDock) && (presentation & NSApplicationPresentationHideMenuBar) &&
+                !(presentation & (NSApplicationPresentationAutoHideDock | NSApplicationPresentationAutoHideMenuBar));
             NSDictionary *state = @{@"virtual": virtual, @"policy": @(app.activationPolicy), @"physicalWidth": @(actual.size.width),
                 @"physicalHeight": @(actual.size.height), @"physicalUnchanged": @(CGRectEqualToRect(original, actual)),
+                @"presentationProtected": @(protected), @"active": @(app.isActive), @"key": @(window.isKeyWindow),
                 @"fullscreen": @((window.styleMask & NSWindowStyleMaskFullScreen) != 0),
                 @"windowWidth": @(frame.size.width), @"windowHeight": @(frame.size.height),
                 @"canvasWidth": @(canvas.size.width), @"canvasHeight": @(canvas.size.height),
@@ -129,6 +133,7 @@ int main(int argc, const char **argv) {
                 // A renderer can appear after the first window/key notification.
                 dispatch_after(dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC / 4), dispatch_get_main_queue(), ^{
                     NSView *render = [[NSView alloc] initWithFrame:window.contentView.bounds];
+                    render.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
                     CAMetalLayer *layer = [CAMetalLayer layer];layer.device = MTLCreateSystemDefaultDevice();
                     layer.drawableSize = CGSizeMake(1920,1080);render.wantsLayer=YES;render.layer=layer;
                     [window.contentView addSubview:render];[window.contentView setNeedsDisplay:YES];
