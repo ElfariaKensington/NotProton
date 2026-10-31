@@ -31,6 +31,7 @@ SRCS := \
 	dylib/util/log.c \
 	dylib/util/file.c \
 	dylib/util/peicon.c \
+	dylib/util/pe.c \
 	dylib/hooks/hooks.c \
 	dylib/hooks/hook_compat.c \
 	dylib/hooks/hook_shortcut.c \
@@ -41,6 +42,8 @@ SRCS := \
 	dylib/hooks/hook_spawn.c \
 	dylib/hooks/hook_launch.c \
 	dylib/hooks/hook_activate.c \
+	dylib/hooks/hook_ceg.c \
+	dylib/feats/ceg.c \
 	dylib/feats/compat.c \
 	dylib/feats/webui.c \
 	dylib/feats/compatsvc.c \
@@ -48,6 +51,7 @@ SRCS := \
 	dylib/feats/compatpage.c \
 	dylib/feats/prefixstate.c \
 	dylib/feats/usershortcuts.c \
+	dylib/feats/conf.c \
 	dylib/feats/webpatch.c \
 	dylib/feats/nativeplatform.c \
 	dylib/feats/input_access.c \
@@ -69,12 +73,12 @@ OBJS := $(patsubst %.c,$(OUT_DIR)/%.o,$(SRCS))
 DEPS := $(OBJS:.o=.d)
 
 .PHONY: all clean rebuild dobby deploy dylib dylib-install sigcheck fonts fonts-install app-payload app app-zip \
-        anchorcheck callscheck sigdb-fixtures webpatch-fixtures peicon-fixtures panel-behavior app-tests \
-        featcheck featstagecheck \
+        anchorcheck callscheck sigdb-fixtures webpatch-fixtures peicon-fixtures ceg-check panel-behavior app-tests \
+        featcheck featstagecheck runnervariantcheck conf-fixtures confcheck \
         tests-list overlay-shim overlay-shim-install overlay-shim-tests \
         overlay-shim-bench iconmaker icon \
         appinfo helpers-install ntdll-resolve bridge runcheck compatcheck envpasscheck \
-        compatsvc-check prefixstate-check defaults-check compatpage-check defaults-drift shortcutcheck scriptcheck envcheck buildcheck settingscheck routecheck bridgecheck gamedrivecheck launchercheck launch-shell activatecheck FORCE
+        compatsvc-check prefixstate-check defaults-check compatpage-check defaults-drift shortcutcheck scriptcheck envcheck buildcheck settingscheck routecheck bridgecheck gamedrivecheck launchercheck bundlecheck launch-shell activatecheck FORCE
 
 APP_PAYLOAD := app/Sources/NotProtonApp/Resources/payload
 
@@ -136,6 +140,11 @@ featstagecheck:
 		$(call SKIP,featstagecheck,dylib/tests/featstagecheck.sh); exit 0; fi; \
 	sh dylib/tests/featstagecheck.sh dylib/feats/compat_run.sh
 
+runnervariantcheck:
+	@if [ ! -f dylib/tests/runnervariantcheck.sh ]; then \
+		$(call SKIP,runnervariantcheck,dylib/tests/runnervariantcheck.sh); exit 0; fi; \
+	sh dylib/tests/runnervariantcheck.sh dylib/feats/compat_run.sh
+
 gamedrivecheck:
 	@if [ ! -f dylib/tests/gamedrivecheck.sh ]; then $(call SKIP,gamedrivecheck,dylib/tests/gamedrivecheck.sh); exit 0; fi; \
 	sh dylib/tests/gamedrivecheck.sh dylib/feats/compat_run.sh
@@ -143,6 +152,9 @@ gamedrivecheck:
 launchercheck:
 	@if [ ! -f dylib/tests/launchercheck.sh ]; then $(call SKIP,launchercheck,dylib/tests/launchercheck.sh); exit 0; fi; \
 	sh dylib/tests/launchercheck.sh dylib/feats/compat_run.sh
+
+bundlecheck: $(OUT_DIR)/appinfo
+	sh dylib/tests/bundlecheck.sh $(APPINFO) dylib/feats/compat_run.sh
 
 .PHONY: mincheck
 mincheck:
@@ -152,7 +164,7 @@ mincheck:
 l10ncheck:
 	@bin=$$(swift build --package-path app -c release --show-bin-path); \
 	python3 dylib/tests/l10ncheck.py app/Sources/NotProtonApp/Resources/Localization/Localizable.xcstrings \
-		"$$bin/../../Intermediates.noindex/NotProtonApp.build/$$(basename "$$bin")" zh-Hans it
+		"$$bin/../../Intermediates.noindex/NotProtonApp.build/$$(basename "$$bin")" zh-Hans it de fr
 
 # runcheck owns compat_run.sh, whose warnings wait for a change that can move
 # the embedded __text baseline
@@ -260,6 +272,33 @@ callscheck:
 	@if [ ! -f dylib/tests/callscheck.c ]; then $(call SKIP,callscheck,dylib/tests/callscheck.c); exit 0; fi; \
 	$(MAKE) -s $(CALLSCHECK) && $(CALLSCHECK)
 
+CONF_FIXTURES := dylib/tests/conf-fixtures
+CONFDUMP      := $(OUT_DIR)/confdump
+
+$(CONFDUMP): dylib/tests/confdump.c dylib/feats/conf.c dylib/feats/conf.h
+	@mkdir -p $(dir $@)
+	$(TEST_CC) -O1 -o $@ dylib/tests/confdump.c dylib/feats/conf.c
+
+# One corpus, both readers: webpatch.c through confdump, compat_run.sh through its own
+# normaliser. A difference between them is a difference between the panel and the launch.
+conf-fixtures:
+	@if [ ! -d $(CONF_FIXTURES) ] || [ ! -f dylib/tests/confdump.c ]; then \
+		$(call SKIP,conf-fixtures,$(CONF_FIXTURES)); exit 0; fi; \
+	$(MAKE) -s $(CONFDUMP) || exit 1; \
+	tmp=$$(mktemp -d); \
+	grep -v '^\#' $(CONF_FIXTURES)/EXPECTED | grep -v '^$$' > $$tmp/want; \
+	$(CONFDUMP) $(CONF_FIXTURES) > $$tmp/got || { rm -rf $$tmp; exit 1; }; \
+	if ! diff -u $$tmp/want $$tmp/got > $$tmp/diff; then \
+		echo "FAIL: webpatch.c's reader does not read the corpus as EXPECTED says"; \
+		head -40 $$tmp/diff; rm -rf $$tmp; exit 1; fi; \
+	n=$$(grep -c . $$tmp/got); rm -rf $$tmp; \
+	echo "==> conf fixtures: $$n normalised lines match EXPECTED"
+
+confcheck:
+	@if [ ! -f dylib/tests/confcheck.sh ]; then \
+		$(call SKIP,confcheck,dylib/tests/confcheck.sh); exit 0; fi; \
+	sh dylib/tests/confcheck.sh dylib/feats/compat_run.sh $(CONF_FIXTURES)
+
 SIGDB_FIXTURES := dylib/tests/sigdb-fixtures
 
 sigdb-fixtures:
@@ -285,9 +324,10 @@ sigdb-fixtures:
 
 PEICON_CHECK := $(OUT_DIR)/peicon-check
 
-$(PEICON_CHECK): dylib/tests/peicon-check.c dylib/util/peicon.c dylib/util/peicon.h
+$(PEICON_CHECK): dylib/tests/peicon-check.c dylib/util/peicon.c dylib/util/peicon.h \
+                 dylib/util/pe.c dylib/util/pe.h
 	@mkdir -p $(dir $@)
-	$(TEST_CC) -O1 -o $@ dylib/tests/peicon-check.c dylib/util/peicon.c
+	$(TEST_CC) -O1 -o $@ dylib/tests/peicon-check.c dylib/util/peicon.c dylib/util/pe.c
 
 peicon-fixtures:
 	@if [ ! -f dylib/tests/peicon-check.c ]; then \
@@ -300,13 +340,28 @@ peicon-fixtures:
 		echo "peicon-check ran out of time, so a hostile resource tree is unbounded"; fi; \
 	exit $$rc
 
+CEG_CHECK := $(OUT_DIR)/ceg-check
+CEG_CHECK_SRCS := dylib/tests/ceg-check.c dylib/feats/ceg.c dylib/util/pe.c dylib/util/file.c \
+                  dylib/util/log.c
+
+$(CEG_CHECK): $(CEG_CHECK_SRCS) dylib/feats/ceg.h dylib/util/a64.h dylib/util/pe.h dylib/util/file.h \
+              dylib/util/spawn.h
+	@mkdir -p $(dir $@)
+	$(TEST_CC) -O1 -fsanitize=address,undefined -fno-sanitize-recover=all \
+	  -DNP_CEG_CALL_TIMEOUT_S=2 -o $@ $(CEG_CHECK_SRCS)
+
+ceg-check:
+	@if [ ! -f dylib/tests/ceg-check.c ]; then $(call SKIP,ceg-check,dylib/tests/ceg-check.c); exit 0; fi; \
+	$(MAKE) -s $(CEG_CHECK) && $(CEG_CHECK)
+
 GATECHECK         := $(OUT_DIR)/gatecheck
 FEATCHECK         := $(OUT_DIR)/featcheck
 WEBPATCH_FIXTURES := dylib/tests/webpatch-fixtures
 
-$(GATECHECK): dylib/tests/gatecheck.c dylib/feats/webpatch.c dylib/feats/webpatch.h
+$(GATECHECK): dylib/tests/gatecheck.c dylib/feats/webpatch.c dylib/feats/webpatch.h \
+              dylib/feats/conf.c dylib/feats/conf.h dylib/util/file.c
 	@mkdir -p $(dir $@)
-	$(TEST_CC) -O1 -o $@ dylib/tests/gatecheck.c
+	$(TEST_CC) -O1 -o $@ dylib/tests/gatecheck.c dylib/feats/conf.c dylib/util/file.c
 
 NATIVEPLATFORMCHECK := $(OUT_DIR)/nativeplatformcheck
 
@@ -314,9 +369,11 @@ $(NATIVEPLATFORMCHECK): dylib/tests/nativeplatformcheck.c dylib/feats/nativeplat
 	@mkdir -p $(dir $@)
 	$(TEST_CC) -O1 -DHELPER_TIMEOUT_MS=1000 -o $@ dylib/tests/nativeplatformcheck.c dylib/feats/nativeplatform.c dylib/util/file.c
 
-$(FEATCHECK): dylib/tests/featcheck.c dylib/feats/webpatch.c dylib/feats/webpatch.h
+$(FEATCHECK): dylib/tests/featcheck.c dylib/feats/webpatch.c dylib/feats/webpatch.h \
+              dylib/feats/conf.c dylib/feats/conf.h \
+              dylib/util/file.c
 	@mkdir -p $(dir $@)
-	$(TEST_CC) -O1 -o $@ dylib/tests/featcheck.c
+	$(TEST_CC) -O1 -o $@ dylib/tests/featcheck.c dylib/feats/conf.c dylib/util/file.c
 
 featcheck:
 	@if [ ! -f dylib/tests/featcheck.c ]; then \
@@ -423,7 +480,7 @@ panel-behavior:
 		echo "==> panel-behavior: node not found, skipped"; exit 0; fi; \
 	mkdir -p $(OUT_DIR) && \
 	$(TEST_CC) -O1 -o $(OUT_DIR)/panel-emit \
-	  $(PANEL_TESTS)/emit.c && \
+	  $(PANEL_TESTS)/emit.c dylib/feats/conf.c dylib/util/file.c && \
 	node $(PANEL_TESTS)/behavior.js $(OUT_DIR)/panel-emit && \
 	node $(PANEL_TESTS)/switching.js $(OUT_DIR)/panel-emit && \
 	node $(PANEL_TESTS)/launch-options.js $(OUT_DIR)/panel-emit && \
@@ -541,15 +598,17 @@ ICONMAKER := $(OUT_DIR)/iconmaker
 
 iconmaker: $(ICONMAKER)
 
-$(ICONMAKER): helpers/iconmaker.swift helpers/iconmaker.h dylib/util/peicon.c dylib/util/peicon.h helpers/shortcuts.h helpers/shortcuts.c
+$(ICONMAKER): helpers/iconmaker.swift helpers/iconmaker.h dylib/util/peicon.c dylib/util/peicon.h dylib/util/pe.c dylib/util/pe.h helpers/shortcuts.h helpers/shortcuts.c
 	@mkdir -p $(OUT_DIR)
 	$(CC) -c -arch $(ARCH) -mmacosx-version-min=$(MIN_VER) $(AVAIL) -std=c17 -O2 \
 		-Wall -Wextra -o $(OUT_DIR)/peicon-host.o dylib/util/peicon.c
 	$(CC) -c -arch $(ARCH) -mmacosx-version-min=$(MIN_VER) $(AVAIL) -std=c17 -O2 \
+		-Wall -Wextra -o $(OUT_DIR)/pe-host.o dylib/util/pe.c
+	$(CC) -c -arch $(ARCH) -mmacosx-version-min=$(MIN_VER) $(AVAIL) -std=c17 -O2 \
 		-Wall -Wextra -o $(OUT_DIR)/shortcuts-host.o helpers/shortcuts.c
 	swiftc -O -target $(ARCH)-apple-macos$(MIN_VER) \
 		-framework AppKit -import-objc-header helpers/iconmaker.h \
-		-o $@ helpers/iconmaker.swift $(OUT_DIR)/peicon-host.o $(OUT_DIR)/shortcuts-host.o
+		-o $@ helpers/iconmaker.swift $(OUT_DIR)/peicon-host.o $(OUT_DIR)/pe-host.o $(OUT_DIR)/shortcuts-host.o
 	@echo "==> Built $@"
 
 APPINFO := $(OUT_DIR)/appinfo

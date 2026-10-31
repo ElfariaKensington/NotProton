@@ -791,10 +791,27 @@ void *np_compat_manager(void) {
     return g_manager;
 }
 
-int np_compat_app_runs_tool(uint32_t appid) {
+static const char *app_tool_name(uint32_t appid) {
     const uint8_t *tool = np_compat_tool_for_app(g_manager, appid);
+    const char *name = tool ? *(const char *const *)(tool + COMPAT_TOOL_NAME_OFF) : NULL;
+    return is_tool_name(name) ? name : NULL;
+}
 
-    return tool && is_tool_name(*(const char *const *)(tool + COMPAT_TOOL_NAME_OFF));
+int np_compat_app_runs_tool(uint32_t appid) {
+    return app_tool_name(appid) != NULL;
+}
+
+const char *np_compat_app_tool_dir(uint32_t appid) {
+    const char *name = app_tool_name(appid);
+    if (!name)
+        return NULL;
+
+    load_tool_list_once();
+    for (int i = 0; i < g_tool_count; i++) {
+        if (strcmp(g_tools[i].name, name) == 0)
+            return g_tools[i].dir;
+    }
+    return NULL;
 }
 
 static void *find_tool(void *compat_mgr, const char *wanted) {
@@ -877,6 +894,22 @@ void np_compat_register_crossover(void *compat_mgr) {
 const char *np_compat_fallback_tool_name(void) {
     load_tool_list_once();
     return g_tool_count > 0 ? g_tools[0].name : TOOL_DIR_NAME;
+}
+
+// collects every installed tool, the CrossOver build it runs and its architecture target(s).
+// The panel needs all three to work out which runner variants it can offer for a game.
+size_t np_compat_tool_builds(const char **names, const char **builds, const char **archs,
+                             size_t max) {
+    load_tool_list_once();
+    size_t n = 0;
+    for (int i = 0; i < g_tool_count && n < max; i++) {
+        if (!*g_tools[i].build) continue;
+        names[n] = g_tools[i].name;
+        builds[n] = g_tools[i].build;
+        archs[n] = strcmp(g_tools[i].flavor, "fex") == 0 ? "aarch64" : "x86_64";
+        n++;
+    }
+    return n;
 }
 
 size_t np_compat_fex_tools(const char **names, size_t max) {
