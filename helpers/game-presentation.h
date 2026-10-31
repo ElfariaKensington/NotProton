@@ -20,10 +20,9 @@ static BOOL npPresentationFullscreen(NSWindow *window, NSWindow *modal, BOOL alr
         (window.styleMask & NSWindowStyleMaskUtilityWindow) ||
         [NSStringFromClass(window.class) rangeOfString:@"Wine"].location == NSNotFound) return NO;
     BOOL native = (window.styleMask & NSWindowStyleMaskFullScreen) != 0;
-    (void)alreadyOwned;
     // Native Space membership is authoritative, including GPU layer rebuilds.
     if (native) return YES;
-    if (!npPresentationRenderer(window.contentView)) return NO;
+    if (!alreadyOwned && !npPresentationRenderer(window.contentView)) return NO;
     SEL fullscreen = NSSelectorFromString(@"fullscreen");
     BOOL wineFullscreen = [window respondsToSelector:fullscreen] &&
         ((BOOL (*)(id, SEL))objc_msgSend)(window, fullscreen);
