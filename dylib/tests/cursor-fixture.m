@@ -4,11 +4,12 @@
 #include <stdio.h>
 
 @interface WineWindow : NSPanel
-@property BOOL testVisible, testKey, testMinimized;
+@property BOOL testVisible, testKey, testMinimized, testNativeFullscreen;
 @property NSWindow *testSheet;
 @end
 @implementation WineWindow
 - (BOOL)isVisible { return self.testVisible; }
+- (NSWindowStyleMask)styleMask { return [super styleMask] | (self.testNativeFullscreen ? NSWindowStyleMaskFullScreen : 0); }
 - (BOOL)isKeyWindow { return self.testKey; }
 - (BOOL)isMiniaturized { return self.testMinimized; }
 - (NSWindow *)attachedSheet { return self.testSheet; }
@@ -96,9 +97,31 @@ int main(int argc, char **argv) {
         [game setFrame:NSScreen.screens.firstObject.frame display:NO];
         gl.frame=game.contentView.bounds;
         check(npPresentationTarget(game,YES,nil),"borderless physical fullscreen is protected without a resolution override");
+        NSButton *hud=[[NSButton alloc] initWithFrame:NSMakeRect(NSMidX(game.contentView.bounds)-50,NSMidY(game.contentView.bounds)-25,100,50)];
+        [game.contentView addSubview:hud];
+        check(npPresentationTarget(game,YES,nil),"HUD covering center does not release fullscreen protection");
+        check(npPresentationCandidate(nil,game,YES,nil)==game,"same-app nil-key handoff keeps fullscreen protection");
+        check(npPresentationCandidate(nil,game,NO,nil)==nil,"actual app deactivation always releases protection");
+        check(npPresentationCandidate(dialog,game,YES,nil)==nil,"real dialog focus releases protection");
+        check(!npPresentationEventReleases(NSWindowWillCloseNotification,dialog,game),"closing an unrelated window cannot reveal Dock");
+        check(!npPresentationEventReleases(NSWindowDidResignKeyNotification,game,game),"key resignation alone cannot reveal Dock during a handoff");
+        check(npPresentationEventReleases(NSWindowWillCloseNotification,game,game),"closing the actual game releases protection");
+        check(npPresentationEventReleases(NSApplicationDidResignActiveNotification,nil,game),"Alt-Tab releases protection immediately");
+        NSEdgeInsets notch=NSScreen.screens.firstObject.safeAreaInsets;
+        NSRect safe=NSScreen.screens.firstObject.frame;
+        safe.origin.x+=notch.left;safe.origin.y+=notch.bottom;
+        safe.size.width-=notch.left+notch.right;safe.size.height-=notch.top+notch.bottom;
+        [game setFrame:safe display:NO];gl.frame=game.contentView.bounds;
+        check(npPresentationTarget(game,YES,nil),"notch-safe fullscreen remains protected");
+        [hud removeFromSuperview];
         [game setFrame:oldFrame display:NO];
         [gl removeFromSuperview];
         check(!cursorTarget(game,inside,top,YES,nil),"bitmap splash keeps cursor");
+        game.testNativeFullscreen=YES;
+        check(npPresentationTarget(game,YES,nil),"native Space stays protected during a renderer rebuild");
+        game.testNativeFullscreen=NO;
+        check(npPresentationAuxiliaryKey(nil),"nil-key AppKit handoff can locate fullscreen owner");
+        check(!npPresentationAuxiliaryKey(dialog),"ordinary dialogs cannot borrow fullscreen owner protection");
         // Stub cursor output: never hide or move the user's real cursor in this test.
         Method current=class_getClassMethod(NSCursor.class,@selector(currentCursor));IMP old=method_getImplementation(current);
         method_setImplementation(current,(IMP)currentCursor);
@@ -143,6 +166,8 @@ int main(int argc, char **argv) {
         check((protected & NSApplicationPresentationHideDock) && (protected & NSApplicationPresentationHideMenuBar),"fullscreen uses non-revealing Dock/menu policy");
         check(!(protected & (NSApplicationPresentationAutoHideDock | NSApplicationPresentationAutoHideMenuBar | NSApplicationPresentationAutoHideToolbar)),"fullscreen clears all edge-reveal flags");
         check((protected & NSApplicationPresentationFullScreen) && !(protected & NSApplicationPresentationDisableProcessSwitching),"Space membership and Cmd-Tab stay available");
+        check(npPresentationNeedsUpdate(protected,protected,defaults,YES),"system policy drift is detected even when app cache still says protected");
+        check(!npPresentationNeedsUpdate(protected,protected,protected,YES),"stable effective presentation needs no redundant writes");
         npPresentationSet=recordPresentation;npRequestedPresentation=defaults;
         npApplyPresentation(YES);check(testPresentation==protected,"focused fullscreen applies strict presentation");
         npApplyPresentation(NO);check(testPresentation==defaults,"focus loss restores original presentation");

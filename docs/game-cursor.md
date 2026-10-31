@@ -37,3 +37,10 @@ Spaces and borderless windows covering the physical display, including games wit
 no resolution override. AppKit/Wine presentation updates are normalized while the
 game is active; dialogs, windowed mode, focus loss and termination restore the
 requested presentation flags. Cmd-Tab and system preferences remain available.
+
+Presentation ownership is retained across same-app key-window handoffs and native
+renderer replacement. Notifications from unrelated closing windows cannot release
+it. A real dialog, mode change, game close or app deactivation still releases it.
+The policy checks effective system presentation flags as well as AppKit’s cached
+request and reasserts protection if they diverge. State transitions are recorded
+as `NotProton presentation v2` lines in the existing per-game Wine log.
