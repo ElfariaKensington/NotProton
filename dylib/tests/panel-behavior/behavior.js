@@ -20,6 +20,98 @@ for (const form of Object.keys(FORMS)) {
                                   strCompatToolName: '' }) }) !== null,
        'a shortcut renders the panel before a tool name reaches the page');
 
+  // Another tool can sit in the same folder -- FEXMac runs macOS on macOS -- and these
+  // settings are CrossOver's, so it gets nothing from us rather than the wrong page.
+  t.ok(P({ details: details('', { strCompatToolName: 'fexmac' }) }) === null,
+       'a tool NotProton did not install renders no panel');
+  t.ok(P({ details: details('', { vecPlatforms: ['osx'], strCompatToolName: 'fexmac' }) }) === null,
+       'including on the mac builds that tool is for');
+  t.ok(P({ details: details('', { strCompatToolName: 'notproton-26.3' }) }) !== null,
+       'while one of ours still renders');
+
+  // For a tool we did not install there is no run script of ours in the launch, so the
+  // panel writes what that script would have exported: the dylib on the insert list and
+  // the plugin's own env, in the form that carries a variable without our launch hook.
+  const PORTABLE = JSON.stringify([
+    { k: 'NOTPROTON_HUD', l: 'Hud', on: '1', off: '', dep: '', d: '',
+      rq: '/lib/libhud.dylib', ev: ['HUD=1'] },
+    { k: 'NOTPROTON_WINEY', l: 'Winey', on: '1', off: '', dep: '', d: '',
+      rq: '/lib/libwine.dylib', rn: 1 },
+    { k: 'NOTPROTON_NOTHING', l: 'Nothing', on: '1', off: '', dep: '', d: '' },
+  ]).replace(/"(\w+)":/g, '$1:');
+  {
+    const { render: PO, written: owritten } = panel(emit, form, undefined, { feats: PORTABLE });
+    const row = (tool, opts) => walk(PO({ details: details(opts, { strCompatToolName: tool }) }))
+      .find(x => x.props && x.props.label === 'Hud');
+    const labels = tool => walk(PO({ details: details('', { strCompatToolName: tool }) }))
+      .filter(x => x.props && x.props.label).map(x => x.props.label);
+
+    t.ok(labels('fexmac').includes('Hud'), 'a plugin a launch option can carry is offered');
+    t.ok(!labels('fexmac').includes('Winey'),
+         'one wanting a staged DLL or an override is not, since only our runner does those');
+    t.ok(!labels('fexmac').includes('Nothing'), 'and neither is one with nothing to deliver');
+    t.ok(!labels('fexmac').includes('Graphics'), 'the CrossOver sections stay behind');
+
+    owritten.length = 0;
+    row('fexmac', '').props.onChange(true);
+    t.ok(owritten[0].opts ===
+         'env DYLD_INSERT_LIBRARIES=/lib/libhud.dylib HUD=1 %command%',
+         'switching it on writes the dylib and the env through env');
+    t.ok(!row('fexmac', '').props.checked, 'it reads as off before any of that is there');
+    t.ok(row('fexmac', 'env DYLD_INSERT_LIBRARIES=/lib/libhud.dylib HUD=1 %command%').props.checked,
+         'and as on once it is');
+    owritten.length = 0;
+    row('fexmac', 'env DYLD_INSERT_LIBRARIES=/lib/libhud.dylib:/other.dylib HUD=1 %command%')
+      .props.onChange(false);
+    t.ok(owritten[0].opts === 'env DYLD_INSERT_LIBRARIES=/other.dylib %command%',
+         'switching it off takes its own entry out and leaves the rest');
+    t.ok(row('notproton-26.3', '').props.checked === false,
+         'and under one of ours the row is the toggle it always was');
+    owritten.length = 0;
+    row('notproton-26.3', '').props.onChange(true);
+    t.ok(owritten[0].opts === 'NOTPROTON_HUD=1 %command%',
+         'writing the key our own run script reads');
+  }
+
+  // A value row's key is what our run script strips the prefix off. With no run script in
+  // the launch the panel writes the stripped name itself, and the rows that hang off a
+  // toggle have to read that toggle the same way the toggle is written.
+  const PVALUES = JSON.stringify([
+    { k: 'NOTPROTON_HUD', l: 'Hud', on: '1', off: '', dep: '', d: '',
+      rq: '/lib/libhud.dylib', ev: ['HUD=1'] },
+    { k: 'NOTPROTON_ENV_HUD_POS', l: 'HUD position', on: '1', off: '', d: '',
+      dep: 'NOTPROTON_HUD', ty: 'choice', ch: [{ v: 'tl', l: 'Top left' }] },
+    { k: 'NOTPROTON_PRIVATE', l: 'Private', on: '1', off: '', dep: '', d: '',
+      ty: 'choice', ch: [{ v: 'x', l: 'Ex' }] },
+  ]).replace(/"(\w+)":/g, '$1:');
+  {
+    const { render: PV, written: vwritten } = panel(emit, form, undefined, { feats: PVALUES });
+    const nodesFor = (tool, opts) =>
+      walk(PV({ details: details(opts, { strCompatToolName: tool }) }));
+    const labelsFor = (tool, opts) => nodesFor(tool, opts)
+      .filter(x => x.props && x.props.label).map(x => x.props.label);
+    const on = 'env DYLD_INSERT_LIBRARIES=/lib/libhud.dylib HUD=1 %command%';
+
+    t.ok(!labelsFor('fexmac', '').includes('HUD position'),
+         'a row under a toggle stays hidden while the toggle is off');
+    t.ok(labelsFor('fexmac', on).includes('HUD position'),
+         'and appears once the toggle reads as on from the launch options');
+    t.ok(!labelsFor('fexmac', '').includes('Private'),
+         'a value row with a key of ours is not offered, having no run script to strip it');
+    vwritten.length = 0;
+    nodesFor('fexmac', on).find(x => x.props.label === 'HUD position')
+      .props.onChange({ data: 'tl' });
+    // A new assignment goes at the front of the run, as it does for every other row.
+    t.ok(vwritten[0].opts === on.replace('env ', 'env HUD_POS=tl '),
+         'picking a value writes the stripped name inside the env call');
+    t.ok(nodesFor('fexmac', on.replace('env ', 'env HUD_POS=tl '))
+           .find(x => x.props.label === 'HUD position').props.selectedOption === 'tl',
+         'and reads it back from there');
+    t.ok(nodesFor('notproton-26.3', 'NOTPROTON_HUD=1 NOTPROTON_ENV_HUD_POS=tl %command%')
+           .find(x => x.props.label === 'HUD position').props.selectedOption === 'tl',
+         'while under one of ours the key keeps its prefix');
+  }
+
   let r = nodes('');
   t.ok(toggles(r).length === 7 && sections(r).length === 3, 'automatic shows seven toggles in three sections');
   t.ok(r.filter(x => x.type === 'Dropdown').length === 2, 'two dropdowns');
@@ -120,6 +212,32 @@ for (const form of Object.keys(FORMS)) {
        'the stray-zero scanner finds a zero when there is one');
   t.ok(!hasZero(P({ details: details('') })),
        'no plugins renders nothing rather than a literal 0');
+
+  // A plugin can name the tools it is for, which is how one meant for an arm64 runner
+  // stays off a Rosetta one. The filter runs before anything else reads the rows, so a
+  // sub-option of a row that was filtered out goes with it.
+  const PICKY = JSON.stringify([
+    { k: 'NOTPROTON_FEXONLY', l: 'FEX only', on: '1', off: '', dep: '', d: '',
+      tl: ['notproton-fex*'] },
+    { k: 'NOTPROTON_FEXSUB', l: 'FEX sub', on: '1', off: '', dep: 'NOTPROTON_FEXONLY', d: '' },
+    { k: 'NOTPROTON_EITHER', l: 'Either', on: '1', off: '', dep: '', d: '' },
+    { k: 'NOTPROTON_NAMED', l: 'Named', on: '1', off: '', dep: '', d: '',
+      tl: ['notproton-26.3'] },
+  ]).replace(/"(\w+)":/g, '$1:');
+  const labelsFor = (tool, opts) => {
+    const { render: PP } = panel(emit, form, undefined, { feats: PICKY });
+    return walk(PP({ details: details(opts, { strCompatToolName: tool }) }))
+      .filter(x => x.props && x.props.label).map(x => x.props.label);
+  };
+  t.ok(!labelsFor('notproton-26.3', '').includes('FEX only'),
+       'a row for another tool is not shown');
+  t.ok(labelsFor('notproton-fex-rosetta', '').includes('FEX only'),
+       'and is shown on one its pattern matches');
+  t.ok(labelsFor('notproton-26.3', '').includes('Named'), 'an exact name matches too');
+  t.ok(labelsFor('notproton-fex-rosetta', '').includes('Either'),
+       'a row naming no tools is shown everywhere');
+  t.ok(!labelsFor('notproton-26.3', 'NOTPROTON_FEXONLY=1 %command%').includes('FEX sub'),
+       'a sub-option of a filtered row goes with it, whatever the launch options say');
 
   // Lines that only appear once the row is on.
   const KEYS = JSON.stringify([

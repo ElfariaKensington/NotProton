@@ -43,15 +43,19 @@
 #define NP_FEATS "\032"
 // Stands for the runner variants read from the support directory.
 #define NP_VARS "\033"
+// Stands for the JS array of the tools NotProton installed, the same names
+// np_webpatch_set_tool_builds carries.
+#define NP_OUR_TOOLS "\034"
 
 #define NP_TOOL_NAME_MAX 128
 
 #define NP_UNREAD_DEFAULTS "{rosetta:null,fex:null}"
 
 enum { IN_FALLBACK_TOOL, IN_FEX_TOOLS, IN_DEFAULTS, IN_BUILDS, IN_READY, IN_FEATS, IN_VARS,
-       IN_COUNT };
+       IN_OUR_TOOLS, IN_COUNT };
 typedef struct { char *text[IN_COUNT]; } np_inputs_t;
-static const char *const g_unset[IN_COUNT] = { "", "[]", NP_UNREAD_DEFAULTS, "[]", "{}", "[]", "[]" };
+static const char *const g_unset[IN_COUNT] = { "", "[]", NP_UNREAD_DEFAULTS, "[]", "{}", "[]", "[]",
+                                               "[]" };
 static pthread_key_t g_inputs_key;
 static pthread_once_t g_inputs_once = PTHREAD_ONCE_INIT;
 
@@ -304,6 +308,7 @@ static const char *marker_text(char c) {
     if (c == NP_FEX_TOOLS[0]) return input_text(IN_FEX_TOOLS);
     if (c == NP_DEFAULTS[0]) return input_text(IN_DEFAULTS);
     if (c == NP_BUILDS[0]) return input_text(IN_BUILDS);
+    if (c == NP_OUR_TOOLS[0]) return input_text(IN_OUR_TOOLS);
     if (c == NP_READY[0] || c == NP_FEATS[0]) {
         if (!g_feat_ready_done) feat_build();
         return input_text(c == NP_READY[0] ? IN_READY : IN_FEATS);
@@ -436,6 +441,21 @@ static char *out_take(np_out_t *o) {
     return buf;
 }
 
+// A repeatable field as a JS array, which is how the list fields reach the panel.
+static int feat_put_list(np_out_t *o, const char *key, const np_conf_rec_t *rec,
+                         const char *field) {
+    const char *n, *v;
+    int it = 0, wrote = 0;
+    if (!np_conf_get(rec, field)) return 1;
+    if (!out_put(o, key, strlen(key))) return 0;
+    while (np_conf_next(rec, &it, &n, &v)) {
+        if (strcmp(n, field) != 0) continue;
+        if (wrote++ && !out_put(o, ",", 1)) return 0;
+        if (!out_jsstr(o, v)) return 0;
+    }
+    return out_put(o, "]", 1);
+}
+
 static void feat_build(void) {
     const char *home = getenv("HOME");
     np_conf_rec_t *list = NULL;
@@ -458,15 +478,21 @@ static void feat_build(void) {
         const char *desc = np_conf_get(rec, "description");
         const char *type = np_conf_get(rec, "type");
         const char *dflt = np_conf_get(rec, "default");
+        const char *inj = np_conf_get(rec, "inject");
         const char *fn, *fv;
         int it = 0, nreq = 0, ok = 0;
         char item[NP_CONF_ID_MAX + 32];
+        char resolved[2048];
         int len;
 
+        resolved[0] = 0;
         while (np_conf_next(rec, &it, &fn, &fv)) {
             if (strcmp(fn, "requires") != 0) continue;
             nreq++;
-            if (feat_exists(home, fv)) ok = 1;
+            if (ok || !feat_exists(home, fv)) continue;
+            // The first that exists is the one a page without our run script inserts.
+            ok = 1;
+            if (!resolve_home_path(resolved, sizeof(resolved), home, fv)) resolved[0] = 0;
         }
         if (!nreq) ok = 1;
         len = snprintf(item, sizeof(item), "%s\"%s\":%d", i ? "," : "", rec->id, ok);
@@ -479,17 +505,16 @@ static void feat_build(void) {
         if (!out_put(&rows, ",off:", 5) || !out_jsstr(&rows, off ? off : "")) goto done;
         if (!out_put(&rows, ",dep:", 5) || !out_jsstr(&rows, dep ? dep : "")) goto done;
         if (!out_put(&rows, ",d:", 3) || !out_jsstr(&rows, desc ? desc : "")) goto done;
-        if (np_conf_get(rec, "description_on")) {
-            int wrotel = 0;
-            it = 0;
-            if (!out_put(&rows, ",dn:[", 5)) goto done;
-            while (np_conf_next(rec, &it, &fn, &fv)) {
-                if (strcmp(fn, "description_on") != 0) continue;
-                if (wrotel++ && !out_put(&rows, ",", 1)) goto done;
-                if (!out_jsstr(&rows, fv)) goto done;
-            }
-            if (!out_put(&rows, "]", 1)) goto done;
+        if (!feat_put_list(&rows, ",dn:[", rec, "description_on")) goto done;
+        if (!feat_put_list(&rows, ",ev:[", rec, "env")) goto done;
+        if (!feat_put_list(&rows, ",tl:[", rec, "tools")) goto done;
+        // What the run script would have done, for a page that has to do it itself: the
+        // dylib to insert, and whether anything here only our own runner can deliver.
+        if (*resolved && inj && strcmp(inj, "1") == 0) {
+            if (!out_put(&rows, ",rq:", 4) || !out_jsstr(&rows, resolved)) goto done;
         }
+        if ((np_conf_get(rec, "stage") || np_conf_get(rec, "overrides"))
+            && !out_put(&rows, ",rn:1", 5)) goto done;
         if (type) {
             if (!out_put(&rows, ",ty:", 4) || !out_jsstr(&rows, type)) goto done;
         }
@@ -576,6 +601,18 @@ void np_webpatch_set_tool_builds(const char *const *names, const char *const *bu
                  archs && archs[i] ? archs[i] : "");
         g_var_tools++;
     }
+    // The same names as a JS array, for the gate that keeps this panel to our own tools.
+    // They passed is_tool_name, so they need no escaping.
+    np_js_t j = js_alloc(g_var_tools * (NP_TOOL_NAME_MAX + 3) + 3);
+    js_put(&j, "[", 1);
+    for (size_t i = 0; i < g_var_tools; i++) {
+        if (i) js_put(&j, ",", 1);
+        js_put(&j, "\"", 1);
+        js_puts(&j, g_var_tool[i]);
+        js_put(&j, "\"", 1);
+    }
+    js_put(&j, "]", 1);
+    set_input(IN_OUR_TOOLS, js_done(&j));
 }
 
 // A directory named for an architecture, such as x86_64-windows, only serves the tool
@@ -908,8 +945,15 @@ static int out_expand(np_out_t *o, const char *replace, const np_cap_t *caps) {
     ".test(o.slice(w.start,w.end)))cs.push(c=[]);else c.push(w)}}" \
     "const m=w=>/%command%/i.test(o.slice(w.start,w.end)),G=cs.find(c=>c.some(m));" \
     "if(!G)return{p:0,e:[]};" \
-    "const n=G.findIndex(w=>m(w)||!/^[A-Za-z_]\\w*=/.test(o.slice(w.start,w.end)));" \
-    "return{p:G[0].start,e:G.slice(0,n<0?G.length:n)}})(),"
+    /* "env FOO=bar %command%" is how a launch option carries a variable here, since Steam
+       runs /usr/bin/env, which assigns and then execs. Reading from after that word is
+       what lets the panel see those values, and write a new one inside the env call
+       rather than in front of it, where it would travel as an argument. */ \
+    "const ev=w=>/^(\\/usr\\/bin\\/)?env$/.test(o.slice(w.start,w.end))," \
+    "as=w=>/^[A-Za-z_]\\w*=/.test(o.slice(w.start,w.end))," \
+    "b=G.length>1&&ev(G[0])&&(as(G[1])||m(G[1]))?1:0," \
+    "n=G.slice(b).findIndex(w=>m(w)||!as(w));" \
+    "return{p:G[b].start,e:G.slice(b,n<0?G.length:b+n),ev:1===b}})(),"
 
 // Rewrites KEY=value entries before %command% and leaves the rest of the text byte for byte.
 #define NP_CX_LAUNCH \
@@ -917,9 +961,12 @@ static int out_expand(np_out_t *o, const char *replace, const np_cap_t *caps) {
     "g=k=>{const p=E.e.filter(w=>o.startsWith(k+\"=\",w.start)).pop();" \
     "return p?(p.value===null?o.slice(p.start+k.length+1,p.end):p.value.slice(k.length+1)):\"\"}," \
     "qv=v=>/^[\\w.,:=\\/+@%-]*$/.test(v)?v:\"'\"+v.replace(/'/g,\"'\\\\''\")+\"'\"," \
-    "s=ps=>{const add=ps.filter(p=>p[1]).map(p=>p[0]+\"=\"+qv(p[1])).join(\" \");let r;" \
-    "if(!/%command%/i.test(o)){if(!add)return;r=add+\" %command%\"+(o.trim()?\" \"+o:\"\")}" \
-    "else{let at=E.p;r=o.slice(0,at)+(add?add+\" \":\"\");" \
+    /* withEnv writes "env NAME=value %command%", the form that carries a variable without
+       our launch hook re-handing the command to a shell. */ \
+    "s=(ps,withEnv)=>{const add=ps.filter(p=>p[1]).map(p=>p[0]+\"=\"+qv(p[1])).join(\" \");" \
+    "const lead=withEnv&&!E.ev?\"env \":\"\";let r;" \
+    "if(!/%command%/i.test(o)){if(!add)return;r=lead+add+\" %command%\"+(o.trim()?\" \"+o:\"\")}" \
+    "else{let at=E.p;r=o.slice(0,at)+(add?lead+add+\" \":\"\");" \
     "E.e.forEach(w=>{if(ps.some(p=>o.startsWith(p[0]+\"=\",w.start))){" \
     "r+=o.slice(at,w.start);at=w.end;while(o[at]===\" \"||o[at]===\"\\t\")at++}});r+=o.slice(at)}" \
     "SteamClient.Apps.SetAppLaunchOptions(id,r.trim()===\"%command%\"?\"\":r)};" \
@@ -1076,13 +1123,19 @@ static int out_expand(np_out_t *o, const char *replace, const np_cap_t *caps) {
 
 // FEX runs arm64 Wine, which has no D3DMetal and never runs under Rosetta.
 #define NP_CX_PANEL(RT, BARREL) \
-    "({fex,get:G,saved:readSaved,set:s,clearUnused,head,dflt,dev,tool})=>{" \
+    "({fex,get:G,saved:readSaved,set:s,clearUnused,head,dflt,dev,tool,ours=1})=>{" \
     "const npZh=" NP_WEB_IS_ZH ",npIt=" NP_WEB_IS_IT ",npL=(en,zh,it)=>npZh?zh:npIt?it:en," \
-    "MSCXReady=" NP_READY ",MSCXFeat=" NP_FEATS ",MSCXVar=" NP_VARS "," \
+    /* A plugin may name the tools it is for. Filtered here rather than at render, so the
+       dependency chain and the indent depth see what the panel shows and nothing else. */ \
+    "npTool=tool||\"\"," \
+    "npFor=p=>\"*\"===p.slice(-1)?npTool.startsWith(p.slice(0,-1)):p===npTool," \
+    "MSCXReady=" NP_READY ",MSCXFeat=(" NP_FEATS ").filter(f=>!f.tl||f.tl.some(npFor))," \
+    "MSCXVar=" NP_VARS "," \
     /* A toggle parent is satisfied by its on value; one that holds a value, such as a
        dropdown or a slider, by holding one at all rather than sitting on Default. */ \
     "on1=(k,n=0)=>{const p=MSCXFeat.find(x=>x.k===k);" \
-    "return!!p&&n<32&&MSCXReady[k]!==0&&(p.ty?\"\"!==G(k):G(k)===p.on)" \
+    "return!!p&&n<32&&MSCXReady[k]!==0" \
+    "&&(p.ty?\"\"!==G(npKey(p)):ours?G(k)===p.on:npHas(p))" \
     "&&(!p.dep||on1(p.dep,n+1))}," \
     /* How deep the chain of parents runs, so a sub-option of a sub-option indents twice. */ \
     "dl=(k,n)=>{const p=MSCXFeat.find(x=>x.k===k);" \
@@ -1101,6 +1154,23 @@ static int out_expand(np_out_t *o, const char *replace, const np_cap_t *caps) {
     "rgOptions:[{data:\"\",label:npL(\"Default\",\"默认\",\"Default\")}]" \
     ".concat(vd.map(v=>({data:v.k,label:v.l})))," \
     "selectedOption:sel,onChange:x=>vset(id,x.data)},\"v:\"+id)}," \
+    /* The insert list is colon-joined, so a row owns its own entry in it rather than the
+       whole value. */ \
+    "npIns=(p,on)=>{const c=G(\"DYLD_INSERT_LIBRARIES\").split(\":\").filter(Boolean)," \
+    "r=c.filter(x=>x!==p);on&&r.push(p);return r.join(\":\")}," \
+    /* Without our run script a plugin's own launch option means nothing, so the row reads
+       and writes what the script would have done: the insert list and the variables. */ \
+    "npKey=f=>ours?f.k:f.k.replace(/^NOTPROTON_ENV_/,\"\")," \
+    "npHas=f=>(!f.rq||G(\"DYLD_INSERT_LIBRARIES\").split(\":\").indexOf(f.rq)>=0)" \
+    "&&(f.ev||[]).every(e=>G(e.slice(0,e.indexOf(\"=\")))===e.slice(e.indexOf(\"=\")+1))," \
+    "npSet=(f,v)=>s((f.rq?[[\"DYLD_INSERT_LIBRARIES\",npIns(f.rq,v)]]:[])" \
+    ".concat((f.ev||[]).map(e=>[e.slice(0,e.indexOf(\"=\")),v?e.slice(e.indexOf(\"=\")+1):\"\"])),1)," \
+    "TP=(f,d,lv)=>{const rd=MSCXReady[f.k]!==0;" \
+    "return(0," RT ".jsx)(" BARREL ".y4," \
+    "{label:rd?f.l:f.l+npL(\" (not installed)\",\" (未安装)\",\" (not installed)\"),disabled:!rd," \
+    "description:d||undefined,checked:rd&&npHas(f)," \
+    "indentLevel:lv||undefined," \
+    "onChange:v=>npSet(f,v)},f.k)}," \
     "TD=(k,l,on,off,d,lv)=>{const rd=MSCXReady[k]!==0;" \
     "return(0," RT ".jsx)(" BARREL ".y4," \
     "{label:rd?l:l+npL(\" (not installed)\",\" (未安装)\",\" (not installed)\"),disabled:!rd," \
@@ -1108,17 +1178,17 @@ static int out_expand(np_out_t *o, const char *replace, const np_cap_t *caps) {
     "indentLevel:lv||undefined," \
     "onChange:v=>s([[k,v?on:(off||\"\")]])},k)}," \
     /* A row that holds one of its declared values, with Default for none of them. */ \
-    "TC=(k,l,d,lv,ch)=>{const rd=MSCXReady[k]!==0,v=G(k);" \
+    "TC=(k,l,d,lv,ch,pe)=>{const rd=MSCXReady[k]!==0,v=G(k);" \
     "return(0," RT ".jsx)(" BARREL ".m," \
     "{label:rd?l:l+npL(\" (not installed)\",\" (未安装)\",\" (not installed)\"),disabled:!rd," \
     "description:d||undefined,layout:\"inline\"," \
     "indentLevel:lv||undefined," \
     "rgOptions:[{data:\"\",label:npL(\"Default\",\"默认\",\"Default\")}]" \
     ".concat(ch.map(c=>({data:c.v,label:c.l})))," \
-    "selectedOption:rd&&ch.some(c=>c.v===v)?v:\"\",onChange:x=>s([[k,x.data]])},k)}," \
+    "selectedOption:rd&&ch.some(c=>c.v===v)?v:\"\",onChange:x=>s([[k,x.data]],pe)},k)}," \
     /* The handle follows the drag on its own; only the finished value is written, and
        the declared default is written as no value at all so launch options stay clean. */ \
-    "TS=(k,l,d,lv,mn,mx,st,df,sf)=>{const rd=MSCXReady[k]!==0,v=G(k)," \
+    "TS=(k,l,d,lv,mn,mx,st,df,sf,pe)=>{const rd=MSCXReady[k]!==0,v=G(k)," \
     "n=!rd||\"\"===v.trim()||!isFinite(+v)?(undefined===df?mn:df):+v;" \
     "return(0," RT ".jsx)(" BARREL ".d3," \
     "{label:rd?l:l+npL(\" (not installed)\",\" (未安装)\",\" (not installed)\"),disabled:!rd," \
@@ -1127,11 +1197,11 @@ static int out_expand(np_out_t *o, const char *replace, const np_cap_t *caps) {
     "value:n,min:mn,max:mx,step:st||undefined,showValue:true," \
     "valueSuffix:sf||undefined," \
     "onChangeComplete:x=>{const r=+(+x).toFixed(4);" \
-    "s([[k,r===df?\"\":String(r)]])}},k)}," \
+    "s([[k,r===df?\"\":String(r)]],pe)}},k)}," \
     /* The same slider snapped to declared values: the control steps by notch and hands
        back the value itself, so a key holding none of them starts at the default. Its
        own notches are two unlabelled bookends, and ours are spread after them. */ \
-    "TL=(k,l,d,lv,ch,df)=>{const rd=MSCXReady[k]!==0,V=ch.map(c=>c.v),v=G(k)," \
+    "TL=(k,l,d,lv,ch,df,pe)=>{const rd=MSCXReady[k]!==0,V=ch.map(c=>c.v),v=G(k)," \
     "n=rd&&V.indexOf(v)>=0?v:(undefined===df?V[0]:df);" \
     "return(0," RT ".jsx)(" BARREL ".gz," \
     "{label:rd?l:l+npL(\" (not installed)\",\" (未安装)\",\" (not installed)\"),disabled:!rd," \
@@ -1141,7 +1211,7 @@ static int out_expand(np_out_t *o, const char *replace, const np_cap_t *caps) {
     "notchCount:V.length,notchTicksVisible:true," \
     "notchLabels:ch.map((c,i)=>({notchIndex:i,label:c.l}))," \
     "renderValue:x=>{const c=ch.find(y=>y.v===x);return c?c.l:String(x)}," \
-    "onChangeComplete:x=>s([[k,x===df?\"\":x]])},k)}," \
+    "onChangeComplete:x=>s([[k,x===df?\"\":x]],pe)},k)}," \
     "w=(k,v,none)=>dflt&&v===(dflt(k)||none)?\"\":v," \
     "T=(k,l)=>(0," RT ".jsx)(" BARREL ".Yh,{className:\"MSCXRow\",label:l," \
     "checked:\"1\"===G(k),onChange:v=>s([[k,w(k,v?\"1\":\"0\",\"0\")]])},k)," \
@@ -1169,9 +1239,17 @@ static int out_expand(np_out_t *o, const char *replace, const np_cap_t *caps) {
     "{data:\"wined3d\",label:\"WineD3D\"}].filter(x=>!fex||x.data!==\"d3dmetal\")," \
     "pick=f=>\"1\"===f(\"DXMT_METALFX_SPATIAL_SWAPCHAIN\")?(U.find(u=>u.data&&+u.data===pf(f(\"DXMT_CONFIG\")||\"\"))" \
     "||{data:String(pf(f(\"DXMT_CONFIG\")||\"\"))}).data:\"\";" \
-    "return(0," RT ".jsx)(\"div\",{className:\"MSCXPanel\",children:(0," RT ".jsxs)(" RT ".Fragment,{children:[" \
-    "(0," RT ".jsx)(\"style\",{children:" NP_CX_OPTIONS_CSS "}),head," \
-    "(0," RT ".jsxs)(" BARREL ".XY,{label:npL(\"Graphics\",\"图形\",\"Grafica\"),children:[" \
+    /* Without our run script behind it a row can only be what a launch option can carry,
+       so one asking for a staged DLL or an override is not offered, and neither is one
+       with nothing to deliver. */ \
+    "const npRows=ours?MSCXFeat:MSCXFeat.filter(f=>!f.rn&&(f.ty" \
+    "?/^NOTPROTON_ENV_/.test(f.k):f.rq||(f.ev||[]).length))," \
+    /* Graphics, upscaling, controllers and the runner variants are all CrossOver's, so
+       they are drawn only for the tools NotProton installed. Another tool in the same
+       folder -- a macOS to macOS one, say -- gets nothing from us rather than a page
+       about a Windows runner it does not use. */ \
+    "npBody=[ours&&head," \
+    "ours&&(0," RT ".jsxs)(" BARREL ".XY,{label:npL(\"Graphics\",\"图形\",\"Grafica\"),children:[" \
     "(0," RT ".jsx)(" BARREL ".m,{rgOptions:B,selectedOption:b," \
     "onChange:v=>s([[\"CX_GRAPHICS_BACKEND\",w(\"CX_GRAPHICS_BACKEND\",v.data||\"auto\",\"auto\")]]" \
     ".concat(!clearUnused||\"\"===v.data||\"d3dmetal\"===v.data?[]:[[\"D3DM_ENABLE_METALFX\",\"\"]])" \
@@ -1185,7 +1263,7 @@ static int out_expand(np_out_t *o, const char *replace, const np_cap_t *caps) {
     "T(\"WINEMSYNC\",\"MSync\")," \
     "T(\"NOTPROTON_RETINA\",npL(\"High Resolution\",\"高分辨率\",\"Alta risoluzione\"))" \
     "]},\"gfx\")," \
-    "dx&&(0," RT ".jsx)(" BARREL ".XY," \
+    "ours&&dx&&(0," RT ".jsx)(" BARREL ".XY," \
     "{label:npL(\"MetalFX Upscaling (Samples from the resolution the game is set to)\"," \
     "\"MetalFX 超分辨率（以游戏设置的分辨率为采样来源）\",\"Upscaling MetalFX (ingrandisce l'immagine dalla risoluzione impostata nel gioco)\")," \
     "children:(0," RT ".jsx)(" BARREL ".m,{rgOptions:U," \
@@ -1193,7 +1271,7 @@ static int out_expand(np_out_t *o, const char *replace, const np_cap_t *caps) {
     "onChange:v=>s(dflt&&v.data===pick(k=>dflt(k)||\"\")" \
     "?[[\"DXMT_METALFX_SPATIAL_SWAPCHAIN\",\"\"],[\"DXMT_CONFIG\",fx(\"\")]]" \
     ":[[\"DXMT_METALFX_SPATIAL_SWAPCHAIN\",v.data?\"1\":\"0\"],[\"DXMT_CONFIG\",fx(v.data)]])})},\"usf\")," \
-    "(0," RT ".jsxs)(" BARREL ".XY,{label:npL(\"Controllers\",\"控制器\",\"Controller\"),children:[" \
+    "ours&&(0," RT ".jsxs)(" BARREL ".XY,{label:npL(\"Controllers\",\"控制器\",\"Controller\"),children:[" \
     "T(\"NOTPROTON_RAW_CONTROLLERS\",npL(\"Let games read controllers directly (May break Steam Input. Not recommended)\"," \
     "\"允许游戏直接读取控制器（可能导致 Steam Input 失效，不推荐）\"," \
     "\"Lascia che i giochi leggano direttamente i controller (pu\\u00f2 interferire con Steam Input, sconsigliato)\"))," \
@@ -1202,20 +1280,26 @@ static int out_expand(np_out_t *o, const char *replace, const np_cap_t *caps) {
     "fex&&(0," RT ".jsx)(" BARREL ".XY,{label:\"FEX\"," \
     "children:D(\"FEX_X87REDUCEDPRECISION\"," \
     "\"Reduced x87 Precision (Reducing precision improves game performance, is enabled by default in CrossOver Preview)\")},\"fex\")," \
-    "dev&&(MSCXFeat.length||vids.length)?(0," RT ".jsx)(" BARREL ".J1,{children:(0," RT ".jsx)(" BARREL ".XY," \
+    "dev&&(npRows.length||vids.length)?(0," RT ".jsx)(" BARREL ".J1,{children:(0," RT ".jsx)(" BARREL ".XY," \
     "{label:npL(\"Developer\",\"开发者\",\"Developer\")," \
-    "children:vids.map(V).concat(MSCXFeat.filter(f=>!f.dep||on1(f.dep))" \
+    "children:vids.map(V).concat(npRows.filter(f=>!f.dep||on1(f.dep))" \
     /* Lines a plugin only wants read once the row is on, such as the keys that
        change the rest of a feature in game, sit under its description while it is. */ \
     ".map(f=>{const lv=f.dep?dl(f.dep,1):0," \
     "d=f.dn&&on1(f.k)?(0," RT ".jsxs)(\"div\",{children:(f.d?[f.d]:[])" \
     ".concat(f.dn.map((x,i)=>(0," RT ".jsx)(\"div\"," \
     "{className:\"MSCXKeys\",children:x},i)))}):f.d;" \
-    "return\"choice\"===f.ty?TC(f.k,f.l,d,lv,f.ch)" \
-    ":\"slider\"===f.ty?(f.ch?TL(f.k,f.l,d,lv,f.ch,f.df)" \
-    ":TS(f.k,f.l,d,lv,f.mn,f.mx,f.st,f.df,f.sf))" \
+    "const kk=npKey(f),pe=ours?0:1;" \
+    "return!ours&&!f.ty?TP(f,d,lv)" \
+    ":\"choice\"===f.ty?TC(kk,f.l,d,lv,f.ch,pe)" \
+    ":\"slider\"===f.ty?(f.ch?TL(kk,f.l,d,lv,f.ch,f.df,pe)" \
+    ":TS(kk,f.l,d,lv,f.mn,f.mx,f.st,f.df,f.sf,pe))" \
     ":TD(f.k,f.l,f.on,f.off,d,lv)}))})},\"dev\"):null" \
-    "]})})}"
+    "].filter(Boolean);" \
+    /* A tool of someone else's with nothing of ours to offer gets no page at all. */ \
+    "if(!npBody.length)return null;" \
+    "return(0," RT ".jsx)(\"div\",{className:\"MSCXPanel\",children:(0," RT ".jsxs)(" RT ".Fragment," \
+    "{children:[(0," RT ".jsx)(\"style\",{children:" NP_CX_OPTIONS_CSS "})].concat(npBody)})})}"
 
 #define NP_CX_OPTIONS_BODY(RT, BARREL) \
     "np=>{" \
@@ -1228,7 +1312,9 @@ static int out_expand(np_out_t *o, const char *replace, const np_cap_t *caps) {
     "G=k=>\"DXMT_CONFIG\"===k?(own.some(fk)?g(k):DF[k]||\"\"):has(k)?g(k):DF[k]||\"\";" \
     "if(t.unAppID<2147483648&&(t.vecPlatforms||[]).indexOf(\"osx\")>=0" \
     "&&!t.strCompatToolName)return null;" \
-    "return MSCXPanel({fex,get:G,saved:g,set:L.s,clearUnused:1,dev:1,tool:tn,dflt:lost?null:k=>DF[k],head:" \
+    "return MSCXPanel({fex,get:G,saved:g,set:L.s,clearUnused:1,dev:1,tool:tn," \
+    "ours:" NP_OUR_TOOLS ".indexOf(tn)>=0," \
+    "dflt:lost?null:k=>DF[k],head:" \
     "typeof MSCXPrefixRow==\"function\"&&(0," RT ".jsx)(\"div\",{className:\"MSCXRow\",ref:e=>e&&MSCXPrefixRow(e,t.unAppID)},\"npstate\")" \
     "})}"
 

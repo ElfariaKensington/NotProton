@@ -579,6 +579,67 @@ ok "and so does going back to the stock runner" "$(switch '')" "0"
 ok "which then stays put" "$(switch '')" "1234"
 rm -f "$pfx/system.reg"
 ok "a prefix not made yet is not touched" "$(switch ccc)" "1234"
+echo "== a new module name is registered in the game's prefix"
+# A variant can bring a module name the base runner never had. Prefixes are copied from a
+# template built before the variant existed, so that name has no entry in system32 and a
+# forward into it fails with "module not found". Giving the prefix the file registers the
+# name; a name it already has resolves on its own and must be left alone.
+: > "$work/log"
+mkdir -p "$base/lib/dxmt/i386-windows"
+mkdir -p "$work/trees/pair/x86_64-windows" "$work/trees/pair/i386-windows"
+dll "$work/trees/pair/x86_64-windows/newmod.dll" src64
+dll "$work/trees/pair/i386-windows/newmod.dll" src32
+dll "$work/trees/pair/x86_64-windows/d3d11.dll" srcold
+desc pair <<CONF
+label = Pair
+variant = Backend
+src = trees/pair
+dst = lib/dxmt
+CONF
+stage() {
+  NOTPROTON_RUNNER_VARIANT="$1" HOME="$work" np_support="$work" np_build="26.3" \
+    np_flavor=rosetta log="$work/log" PATH="$PATH" WINEPREFIX="$2" \
+    sh -c '. "$1/block.sh"; np_variant_stage_prefix' sh "$work"
+}
+pfx="$work/pfx"
+mkdir -p "$pfx/drive_c/windows/system32" "$pfx/drive_c/windows/syswow64"
+native_dll "$pfx/drive_c/windows/system32/d3d11.dll"
+prefixed() { tr -d '\000' < "$1" 2>/dev/null || true; }
+
+stage pair "$pfx"
+ok "the 64-bit module lands in system32" \
+  "$(prefixed "$pfx/drive_c/windows/system32/newmod.dll")" "Wine builtin DLLsrc64"
+ok "the 32-bit module lands in syswow64" \
+  "$(prefixed "$pfx/drive_c/windows/syswow64/newmod.dll")" "Wine builtin DLLsrc32"
+# The prefix gets what the runner ended up with, which is the copy checked for the marker.
+ok "it is the runner's copy, not the tree it was built from" \
+  "$(cmp -s "$pfx/drive_c/windows/system32/newmod.dll" \
+      "$(newest pair)/lib/dxmt/x86_64-windows/newmod.dll" \
+      && echo same)" "same"
+ok "a name the prefix already has is left alone" \
+  "$(prefixed "$pfx/drive_c/windows/system32/d3d11.dll")" ""
+logged "and says what it registered" "pair: registered newmod.dll in system32"
+
+# Staging runs on every launch, so saying it twice must not mean doing it twice.
+: > "$work/log"
+stage pair "$pfx"
+ok "a second launch registers nothing again" \
+  "$(grep -c registered "$work/log" || true)" "0"
+
+# A 64-bit-only prefix has no syswow64 to put the 32-bit module in.
+: > "$work/log"
+narrow="$work/pfx64"
+mkdir -p "$narrow/drive_c/windows/system32"
+stage pair "$narrow"
+ok "a prefix without syswow64 still gets the 64-bit module" \
+  "$(prefixed "$narrow/drive_c/windows/system32/newmod.dll")" "Wine builtin DLLsrc64"
+ok "and nothing is invented for the missing directory" \
+  "$([ -e "$narrow/drive_c/windows/syswow64" ] || echo absent)" "absent"
+
+# Nothing to register when no variant was used, which is most launches.
+: > "$work/log"
+stage '' "$pfx"
+ok "no variant registers nothing" "$(grep -c registered "$work/log" || true)" "0"
 
 [ "$fail" -eq 0 ] || exit 1
 echo "==> runnervariantcheck: variants build on demand, refuse bad trees and fall back"

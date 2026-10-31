@@ -52,6 +52,7 @@ may only be given once, an empty value, a missing `label`.
 | `env` | repeatable. `NAME=VALUE` exported for the game. Names the launch sets itself, such as `PATH`, `HOME`, `WINEPREFIX` or anything starting `DYLD_` or `NOTPROTON_`, are skipped. |
 | `overrides` | added to `WINEDLLOVERRIDES`, e.g. `dxgi=n,b`. |
 | `stage` | a folder whose files are copied into the prefix's `system32` before launch. |
+| `tools` | repeatable. A compatibility tool this row is for, as a name or a name ending in one `*` — `notproton-fex*` for something that only makes sense on an arm64 runner. Naming none means every tool. |
 
 ### Row types
 

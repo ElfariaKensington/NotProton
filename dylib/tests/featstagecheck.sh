@@ -297,6 +297,27 @@ inject=$(loader_macos="$work" WINELOADER=x loader_root="$work" HOME="$work" \
   sh -c 'eval "$1"; sed -n "/^shim=/,/NOTPROTON_GAME_CWD/p" "$loader_macos/launcher"' sh "$launcher")
 mkdir -p "$work/Library/Application Support/notproton"
 : > "$work/Library/Application Support/notproton/overlay-shim.dylib"
+# A plugin may name the tools it is for, and the launch has to agree with the panel about
+# it: a row hidden under one runner must not quietly apply there.
+reset
+conf 10-picky.conf <<EOF
+[NOTPROTON_PICKY]
+label = Picky
+tools = notproton-fex*
+overrides = picky=n
+EOF
+conf 20-any.conf <<EOF
+[NOTPROTON_ANY]
+label = Any
+overrides = any=n
+EOF
+out=$(run np_tool_name=notproton-26.3 NOTPROTON_PICKY=1 NOTPROTON_ANY=1)
+ok "a plugin for other tools does not apply" "$(line "$out" 1)" \
+   "steamclient=n;lsteamclient=b;any=n"
+out=$(run np_tool_name=notproton-fex-rosetta NOTPROTON_PICKY=1 NOTPROTON_ANY=1)
+ok "and does on a tool its pattern matches" "$(line "$out" 1)" \
+   "steamclient=n;lsteamclient=b;picky=n;any=n"
+
 # shellcheck disable=SC2016 # expanded by the inner shell
 dyld=$(env -i HOME="$work" STEAM_DYLD_INSERT_LIBRARIES=/o.dylib NOTPROTON_FEATURE_DYLIBS=/f.dylib \
   sh -c 'eval "$1"; printf "%s|%s" "$DYLD_INSERT_LIBRARIES" "${NOTPROTON_OVERLAY_SHIM:+shim}"' sh "$inject")
