@@ -34,6 +34,11 @@ static void wineCursorUpdate(id value, SEL selector, BOOL force) {
 static int failures, checks;
 static NSCursor *testCurrent;
 static unsigned sets;
+static NSApplicationPresentationOptions testPresentation;
+static unsigned presentationSets;
+static void recordPresentation(id app, SEL selector, NSApplicationPresentationOptions options) {
+    (void)app;(void)selector;testPresentation=options;presentationSets++;
+}
 static id currentCursor(id self, SEL selector) { (void)self;(void)selector;return testCurrent; }
 static void recordSet(id cursor, SEL selector) { (void)selector;testCurrent=cursor;sets++; }
 static void check(BOOL condition, const char *message) {
@@ -81,6 +86,17 @@ int main(int argc, char **argv) {
         check(!cursorTarget(dialog,inside,dialog.windowNumber,YES,nil),"child dialog keeps cursor");[game removeChildWindow:dialog];
         [render removeFromSuperview];GLView *gl=[[GLView alloc] initWithFrame:NSMakeRect(0,0,800,600)];[game.contentView addSubview:gl];
         check(cursorTarget(game,screenPoint(game,gl,NSMakePoint(100,100)),top,YES,nil),"OpenGL game hides cursor");
+        check(!npPresentationTarget(game,NO,nil),"background game leaves Dock and menu bar alone");
+        check(!npPresentationTarget(game,YES,game),"modal dialog leaves system UI accessible");
+        game.styleMask=NSWindowStyleMaskTitled|NSWindowStyleMaskResizable;
+        check(!npPresentationTarget(game,YES,nil),"windowed GPU game leaves system UI accessible");
+        game.styleMask=NSWindowStyleMaskBorderless;
+        check(!npPresentationTarget(game,YES,nil),"small borderless game leaves system UI accessible");
+        NSRect oldFrame=game.frame;
+        [game setFrame:NSScreen.screens.firstObject.frame display:NO];
+        gl.frame=game.contentView.bounds;
+        check(npPresentationTarget(game,YES,nil),"borderless physical fullscreen is protected without a resolution override");
+        [game setFrame:oldFrame display:NO];
         [gl removeFromSuperview];
         check(!cursorTarget(game,inside,top,YES,nil),"bitmap splash keeps cursor");
         // Stub cursor output: never hide or move the user's real cursor in this test.
@@ -120,6 +136,18 @@ int main(int argc, char **argv) {
         check(wine->cursorHidden && wine->hides==1,"returning to game restores Wine hide request");
         updateWineCursorForTarget(wine,@selector(updateCursor:),NO,NO);
         check(!wine->cursorHidden && wine->shows==2,"focus loss or next dialog releases Wine hide again");
+        NSApplicationPresentationOptions defaults=NSApplicationPresentationFullScreen |
+            NSApplicationPresentationAutoHideDock | NSApplicationPresentationAutoHideMenuBar |
+            NSApplicationPresentationAutoHideToolbar;
+        NSApplicationPresentationOptions protected=npProtectedPresentation(defaults);
+        check((protected & NSApplicationPresentationHideDock) && (protected & NSApplicationPresentationHideMenuBar),"fullscreen uses non-revealing Dock/menu policy");
+        check(!(protected & (NSApplicationPresentationAutoHideDock | NSApplicationPresentationAutoHideMenuBar | NSApplicationPresentationAutoHideToolbar)),"fullscreen clears all edge-reveal flags");
+        check((protected & NSApplicationPresentationFullScreen) && !(protected & NSApplicationPresentationDisableProcessSwitching),"Space membership and Cmd-Tab stay available");
+        npPresentationSet=recordPresentation;npRequestedPresentation=defaults;
+        npApplyPresentation(YES);check(testPresentation==protected,"focused fullscreen applies strict presentation");
+        npApplyPresentation(NO);check(testPresentation==defaults,"focus loss restores original presentation");
+        unsigned savedSets=presentationSets;npApplyPresentation(NO);
+        check(presentationSets==savedSets,"repeat release does not overwrite another owner's presentation");
         method_setImplementation(current,old);
         printf("cursor: %d policy and ownership checks; %d failures\n",checks,failures);
         return failures?1:0;

@@ -61,6 +61,8 @@ static BOOL renderedAtPoint(NSView *view, NSPoint point) {
     SEL gl = NSSelectorFromString(@"hasGLDescendant");
     return [view respondsToSelector:gl] && ((BOOL (*)(id, SEL))objc_msgSend)(view, gl);
 }
+#include "game-presentation.h"
+
 static BOOL cursorTarget(NSWindow *window, NSPoint screenPoint, NSInteger topNumber,
                          BOOL active, NSWindow *modal) {
     if (!active || !window || !window.isVisible || !window.isKeyWindow || window.isMiniaturized ||
@@ -151,6 +153,7 @@ static void watchWineCursor(void) {
     method_setImplementation(method, (IMP)updateWineCursor);
 }
 static void refreshCursor(void) {
+    npRefreshPresentation();
     watchWineCursor();
     BOOL gameTarget = overGameRenderer();
     applyWineCursorPolicy(gameTarget);
@@ -206,6 +209,7 @@ __attribute__((constructor)) static void setupCursor(void) {
             Method method = class_getInstanceMethod(NSCursor.class, @selector(set));
             cursorSet = (void *)method_getImplementation(method);
             method_setImplementation(method, (IMP)setCursor);
+            npWatchPresentation();
             startWatching();
         });
     }

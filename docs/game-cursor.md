@@ -30,3 +30,10 @@ The OS retains control of cursor presentation across applications and process ex
 `make cursor-check` checks renderer/focus/dialog boundaries and cursor ownership
 without hiding or moving the user's cursor, plus process exclusions and the actual
 generated launcher’s preservation of existing injected libraries and arguments.
+
+Fullscreen game presentation suppresses edge-triggered Dock and menu-bar reveal
+using app-local HideDock/HideMenuBar flags. This applies both to native fullscreen
+Spaces and borderless windows covering the physical display, including games with
+no resolution override. AppKit/Wine presentation updates are normalized while the
+game is active; dialogs, windowed mode, focus loss and termination restore the
+requested presentation flags. Cmd-Tab and system preferences remain available.
