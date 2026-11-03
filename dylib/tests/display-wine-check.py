@@ -53,7 +53,6 @@ with tempfile.TemporaryDirectory(prefix='np-display-wine-') as temporary:
     subprocess.run(['cp', str(ROOT / 'out/game-display.dylib'), str(macos / 'game-display.dylib')], check=True)
     if args.native_dialog_input:
         cursor = ROOT / 'out/game-cursor.dylib'
-        if cursor.is_file(): (macos / 'game-cursor.dylib').write_bytes(cursor.read_bytes())
         subprocess.run(['clang','-fobjc-arc','-dynamiclib','-mmacosx-version-min=15.0',
             '-arch','arm64','-arch','x86_64','-framework','AppKit',
             str(ROOT / 'dylib/tests/display-dialog-probe.m'),'-o',str(macos / 'probe.dylib')], check=True)
@@ -69,9 +68,6 @@ with tempfile.TemporaryDirectory(prefix='np-display-wine-') as temporary:
         WINELOADER=str(macos / 'wine'), loader_macos=str(macos), loader_root=str(root))
     for name in ('DYLD_INSERT_LIBRARIES', 'STEAM_DYLD_INSERT_LIBRARIES', 'NOTPROTON_FEATURE_DYLIBS'):
         env.pop(name, None)
-    if args.native_dialog_input:
-        env.update(NOTPROTON_FEATURE_DYLIBS=str(macos / 'probe.dylib'),
-            NP_INPUT_LOG=str(root / 'notproton-wine.log'), NP_TEST_NATIVE_DIALOG_INPUT='1')
     source = (ROOT / 'dylib/feats/compat_run.sh').read_text()
     recipe = re.search(r'cat > "\$loader_macos/launcher" <<LAUNCHER\n.*?\nLAUNCHER', source, re.S)[0]
     subprocess.run(['sh', '-ec', recipe], env=env, check=True)
@@ -79,8 +75,12 @@ with tempfile.TemporaryDirectory(prefix='np-display-wine-') as temporary:
     def run(resolution, window=False):
         subprocess.run([str(server), '-k'], env=env, capture_output=True)
         try:
-            result = subprocess.run([str(macos / 'launcher'), str(executable)] + ([] if window else ['--probe']),
-                env=dict(env, NOTPROTON_DISPLAY_RESOLUTION=resolution), timeout=75)
+            try:
+                result = subprocess.run([str(macos / 'launcher'), str(executable)] + ([] if window else ['--probe']),
+                    env=dict(env, NOTPROTON_DISPLAY_RESOLUTION=resolution), timeout=75)
+            except subprocess.TimeoutExpired as error:
+                log = (root / 'notproton-wine.log').read_text(errors='replace')
+                raise AssertionError('Wine fixture timed out; last log output:\n' + log[-12000:]) from error
             text = (root / 'notproton-wine.log').read_text()
             assert result.returncode == 0, text[-4000:]
             match = re.search(r'desktop=(\d+)x(\d+)(?: client=(\d+)x(\d+))?', text)
@@ -91,6 +91,12 @@ with tempfile.TemporaryDirectory(prefix='np-display-wine-') as temporary:
             subprocess.run([str(server), '-k'], env=env, capture_output=True)
     baseline, _ = run('')
     print('Wine baseline desktop:', 'x'.join(baseline[:2]), flush=True)
+    if args.native_dialog_input:
+        # Bootstrap the temporary prefix before loading game-only helpers, as
+        # the normal launcher does before starting the actual game executable.
+        if cursor.is_file(): (macos / 'game-cursor.dylib').write_bytes(cursor.read_bytes())
+        env.update(NOTPROTON_FEATURE_DYLIBS=str(macos / 'probe.dylib'),
+            NP_INPUT_LOG=str(root / 'notproton-wine.log'), NP_TEST_NATIVE_DIALOG_INPUT='1')
     enforced, log = run(args.resolution, window=True)
     assert enforced == tuple(args.resolution.split('x') * 2), (enforced, log[-3000:])
     assert 'entered native fullscreen at ' + args.resolution in log, log[-4000:]
