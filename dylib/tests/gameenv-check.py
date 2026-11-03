@@ -32,7 +32,15 @@ with tempfile.TemporaryDirectory(prefix='notproton-env-') as root:
     assert forwarded == dict(FOO='two words=ok', EMPTY='',
         LITERAL=f'$(touch {marker}); `touch {marker}` $HOME "quoted"',
         UNICODE='Türkçe 日本語', name='game-name', log='game-log', LAST='no-newline'), forwarded
-    assert not marker.exists(), 'Values must never run as shell commands'
+    # Exercise the copied-runner branch without invoking the game.
+    direct_start = source.index('   while IFS= read -r np_game_env_line; do', source.index('game_cwd="$(pwd)"'))
+    direct_end = source.index('   while IFS= read -r np_feat_pair; do', direct_start)
+    direct = source[direct_start:direct_end]
+    direct_script = reader + '\nnp_game_env_pairs=""\n' + collect + '\nset -- /wine game.exe "argument with spaces"\n' + direct + "\nprintf '%s\\0' \"$@\"\n"
+    values = subprocess.check_output(['sh', '-ec', direct_script], env=env).decode().split('\0')[:-1]
+    assert values[-3:] == ['/wine', 'game.exe', 'argument with spaces'], values
+    assert dict(item.split('=',1) for item in values[:-3]) == forwarded, values
+    assert not marker.exists(), 'Values must never run as shell commands' 
     env['verb'] = 'runinprefix'
     out = subprocess.check_output(['sh', '-ec', reader + 'printf %s "$np_game_env_text"'], env=env)
     assert out == b'', 'Helper launches do not import per-game settings'
