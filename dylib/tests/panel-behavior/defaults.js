@@ -67,8 +67,9 @@ const fieldButton = (ns, re) => { const f = settingsRow(ns, re); return f && f.p
 const field = (ns, label) => ns.find(x => x.type === 'FieldDropdown' && x.props.label === label);
 const row = (ns, label) => ns.find(x => x.type === 'Toggle' && x.props.label === label);
 
-function openPage(form, builds, { tool, reply, data } = {}) {
+function openPage(form, builds, { tool, reply, data, lang } = {}) {
   const g = data ? { document: { documentElement: { lang: 'en' } } } : globalsWith(SAVED);
+  if (lang) g.document.documentElement.lang = lang;
   if (builds) g.MSCXBuilds = JSON.parse(JSON.stringify(builds));
   if (tool !== undefined) g.MSCXDefaultTool = tool;
   const h = hooks();
@@ -120,6 +121,25 @@ function defaultToolCases(form) {
   o.h.unmount();
   told(o.g, 'notproton-25.0');
   t.ok(ver(o.r()) === 'notproton-26.1-fex', 'a page that has gone stops listening');
+  return t.failed;
+}
+
+async function italianCases(form) {
+  const t = runner(form + ' italian');
+  if (form === 'component') return t.failed;
+  const { r } = openPage(form, BUILDS.filter(x => x.runner === 'rosetta'), { lang: 'it' });
+  const head = r().find(x => x.type === 'Section' && x.props.label === 'Impostazioni di compatibilit\u00e0 predefinite');
+  t.ok(head, 'the heading is in Italian');
+  t.ok(field(r(), 'Versione di CrossOver'), 'so is the version menu');
+  const applyRow = () => settingsRow(r(), /^Applica come predefinite/);
+  t.ok(applyRow() && applyRow().props.label ===
+       'Applica come predefinite a tutti gli strumenti di compatibilit\u00e0 CrossOver' &&
+       applyRow().props.children.props.children === 'Applica', 'and the apply row');
+  applyRow().props.children.props.onClick();
+  await settle(); await settle();
+  t.ok(applyRow().props.description ===
+       'Applicate. Ora tutti gli strumenti di compatibilit\u00e0 CrossOver usano queste impostazioni.',
+       `and the note after applying (${applyRow().props.description})`);
   return t.failed;
 }
 
@@ -290,7 +310,8 @@ for (const form of Object.keys(FORMS)) {
   t.ok(row(r, 'Metal HUD').props.checked === true, 'an unset row shows the default');
   t.ok(row(r, AVX).props.checked === false, 'the AVX2 default of 0 shows off');
   t.ok(dropdowns(r)[1].props.selectedOption === '1.5', 'an unset upscaler shows the default factor');
-  t.ok(!r.some(x => x.type === 'Button' || x.type === 'button'), 'a game has no Reset to defaults');
+  t.ok(!r.some(x => (x.type === 'Button' || x.type === 'button') && x.props.children === 'Reset to defaults'),
+       'a game has no Reset to defaults');
 
   r = nodes('MTL_HUD_ENABLED=0 CX_GRAPHICS_BACKEND=auto %command%');
   t.ok(row(r, 'Metal HUD').props.checked === false, "the game's 0 wins over the default");
@@ -390,6 +411,7 @@ for (const form of Object.keys(FORMS)) {
          'Rosetta shows its saved defaults');
     t.ok(!p.some(x => x.props && x.type === 'Button' && x.props.children === 'Reset to defaults'),
          'the page has no Reset to defaults');
+    t.ok(!p.some(x => x.type === 'Section' && x.props.label === 'Launch Executable'), 'the page has no Launch Executable section');
 
     const runnerLines = i => sent[i].text.split('\n').sort().join(';');
     row(p, 'MSync').props.onChange(true);
@@ -458,6 +480,7 @@ for (const form of Object.keys(FORMS)) {
   failed += oneKindCases(form);
   failed += defaultToolCases(form);
   failed += splicedCases(form);
+  failed += await italianCases(form);
 }
 return failed;
 }

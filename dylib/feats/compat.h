@@ -131,6 +131,8 @@ const char *np_compat_fallback_tool_name(void);
 
 // Names of the listed tools whose flavor is fex, up to max. Returns how many it wrote.
 size_t np_compat_fex_tools(const char **names, size_t max);
+size_t np_compat_tool_builds(const char **names, const char **builds, const char **archs,
+                             size_t max);
 
 typedef struct {
     const char *name;
@@ -153,6 +155,9 @@ int np_compat_runs_tool(const char *cmd);
 
 // True when the app is set to run with a NotProton compatibility tool.
 int np_compat_app_runs_tool(uint32_t appid);
+
+// NULL when the app doesn't have a Steam Play compatibility tool.
+const char *np_compat_app_tool_dir(uint32_t appid);
 
 // Command line template for the tool's toolmanifest.vdf commandline value.
 const char *np_compat_tool_commandline(void);
