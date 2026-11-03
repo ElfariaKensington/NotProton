@@ -2565,7 +2565,7 @@ if [ -n "$STEAM_COMPAT_DATA_PATH" ]; then
     without_lock_fds "$WINESERVER" -w >> "$log" 2>&1 || true
     printf '%s\n' "$server_config" > "$server_record" || true
   fi
-  if [ "${np_redist_complete:-0}" = 1 ]; then
+  if [ "${np_redist_complete:-0}" = 1 ] && prefix_up_to_date; then
     # Overlap Wine initialization with Steam's helper-to-game handoff.
     without_lock_fds "$WINESERVER" -p60 >> "$log" 2>&1 || true
     WINEDEBUG=err+all,fixme-all "$WINELOADER" cmd.exe /d /c "sc start SamSs" >> "$log" 2>&1 8>&- 9>&- < /dev/null &
