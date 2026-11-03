@@ -7,7 +7,11 @@ import tempfile
 
 source = Path('dylib/feats/compat_run.sh').read_text()
 reader = source[source.index('np_game_env_text=""'):source.index('np_from_defaults() {')]
-forward = source[source.index('# Forward custom names'):source.index('# Prepended first')]
+collect = source[source.index('# Forward custom names'):source.index('# Anything this script does not know by name')]
+start = source.index('  while IFS= read -r np_game_env_line; do', source.index('game_cwd=\"$(pwd)\"'))
+# First loop is the copied-runner path; the second emits open --env arguments.
+start = source.index('  while IFS= read -r np_game_env_line; do', start + 1)
+forward = source[start:source.index('  # Prepended first', start)]
 with tempfile.TemporaryDirectory(prefix='notproton-env-') as root:
     path = Path(root)
     marker = path / 'must-not-exist'
@@ -18,7 +22,7 @@ with tempfile.TemporaryDirectory(prefix='notproton-env-') as root:
             'PATH=/bad\nWINEPREFIX=/bad\nNOTPROTON_GAME_CWD=/bad\nBAD-NAME=no\n'
             'LAST=no-newline')
     (path / 'notproton.env').write_text(text)
-    script = reader + '\nset -- game.exe "argument with spaces"\n' + forward + '''
+    script = reader + '\nnp_game_env_pairs=""\n' + collect + '\nset -- game.exe "argument with spaces"\n' + forward + '''
     printf '%s\\0' "$WINEMSYNC" "$WINEDEBUG" "$DXMT_CONFIG" "$log" "$@"
     '''
     env = dict(os.environ, STEAM_COMPAT_DATA_PATH=root, verb='waitforexitandrun', log='launcher-log')
