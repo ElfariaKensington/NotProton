@@ -40,7 +40,7 @@ with tempfile.TemporaryDirectory(prefix='notproton-env-') as root:
     values = subprocess.check_output(['sh', '-ec', direct_script], env=env).decode().split('\0')[:-1]
     assert values[-3:] == ['/wine', 'game.exe', 'argument with spaces'], values
     assert dict(item.split('=',1) for item in values[:-3]) == forwarded, values
-    assert not marker.exists(), 'Values must never run as shell commands' 
+    assert not marker.exists(), 'Values must never run as shell commands'
     env['verb'] = 'runinprefix'
     out = subprocess.check_output(['sh', '-ec', reader + 'printf %s "$np_game_env_text"'], env=env)
     assert out == b'', 'Helper launches do not import per-game settings'
