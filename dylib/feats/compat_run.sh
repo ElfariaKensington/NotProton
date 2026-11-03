@@ -2613,14 +2613,15 @@ if [ -n "$STEAM_COMPAT_DATA_PATH" ]; then
     echo "avx: ROSETTA_ADVERTISE_AVX=$ROSETTA_ADVERTISE_AVX from $avx_from" >> "$log" 2>&1 || true
   fi
   # Reuse the install-script server when its boot environment is identical.
-  server_config=$(printf '%s\n' "$CX_ROOT" "$WINEMSYNC" "$ROSETTA_ADVERTISE_AVX" "$FEX_X87REDUCEDPRECISION")
+  np_server_stamp=$(stat -f '%d:%i:%m' "$WINELOADER" "$WINESERVER" "$CX_ROOT/share/wine/wine.inf" 2>/dev/null || true)
+  server_config=$(printf '%s\n' "$CX_ROOT" "$WINEMSYNC" "$ROSETTA_ADVERTISE_AVX" "$FEX_X87REDUCEDPRECISION" "$np_server_stamp")
   server_record="$STEAM_COMPAT_DATA_PATH/notproton-server-config"
-  if [ "$(cat "$server_record" 2>/dev/null)" != "$server_config" ]; then
+  if [ -z "$np_server_stamp" ] || ! prefix_up_to_date || [ "$(cat "$server_record" 2>/dev/null)" != "$server_config" ]; then
     without_lock_fds "$WINESERVER" -k >> "$log" 2>&1 || true
     without_lock_fds "$WINESERVER" -w >> "$log" 2>&1 || true
     printf '%s\n' "$server_config" > "$server_record" || true
   fi
-  if [ "${np_redist_complete:-0}" = 1 ]; then
+  if [ "${np_redist_complete:-0}" = 1 ] && prefix_up_to_date; then
     # Overlap Wine initialization with Steam's helper-to-game handoff.
     without_lock_fds "$WINESERVER" -p60 >> "$log" 2>&1 || true
     WINEDEBUG=err+all,fixme-all "$WINELOADER" cmd.exe /d /c "sc start SamSs" >> "$log" 2>&1 8>&- 9>&- < /dev/null &

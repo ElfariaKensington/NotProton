@@ -320,6 +320,13 @@ pick() {
 pick /cx/lib/wine/aarch64-unix ""
 is "FEX runner" "$T/game/runner|wine" "$game_runner|$bundle_exec"
 is "Dock tile hidden" "  <key>LSUIElement</key><true/>" "$uielement_arg"
+np_single_icon=1; eval "$runner_pick"
+is "single-icon host keeps its game launcher" "|launcher" "$game_runner|$bundle_exec"
+np_single_icon=0; np_display_resolution=1920x1080; eval "$runner_pick"
+is "display override keeps its game launcher" "|launcher" "$game_runner|$bundle_exec"
+np_display_resolution=""; np_cursor_helper="$T/cursor-helper.dylib"; : > "$np_cursor_helper"; eval "$runner_pick"
+is "cursor helper keeps its game launcher" "|launcher" "$game_runner|$bundle_exec"
+np_cursor_helper="$T/no-cursor-helper"
 pick /cx/lib/wine/aarch64-unix /extra
 is "own WINEDLLPATH" "|launcher" "$game_runner|$bundle_exec"
 pick /cx/lib/wine/x86_64-unix ""
