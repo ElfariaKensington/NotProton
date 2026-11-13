@@ -1,9 +1,11 @@
 #import <AppKit/AppKit.h>
+#import <ApplicationServices/ApplicationServices.h>
 #import <QuartzCore/QuartzCore.h>
 #import <objc/runtime.h>
 #import <mach-o/dyld.h>
 #import <dlfcn.h>
 #include <mach-o/getsect.h>
+#include <crt_externs.h>
 #include <stdatomic.h>
 #include <os/lock.h>
 #include "../dylib/core/macho.h"
@@ -14,6 +16,7 @@
 static NSSize pixels;
 static Class wineClass;
 static char stateKey;
+static char frontedKey;
 static atomic_bool installQueued;
 static atomic_bool installed;
 static atomic_bool installFailed;
@@ -28,21 +31,20 @@ static CGAffineTransform cursorToPhysical;
 static BOOL cursorMapped;
 static CGFloat cursorScale;
 static void updateCursorMapping(NSWindow *w);
-static NSApplicationPresentationOptions savedPresentation;
+static NSApplicationPresentationOptions savedChrome;
 static BOOL changedPresentation;
+static atomic_bool exclusiveMode;
+static BOOL fullscreenFromWindowStyle;
+static void scheduleEntry(NSWindow *w);
+static void fitWindow(NSWindow *w);
+static void promoteGameProcess(void);
 
-static void syncPresentation(void) {
-    NSWindow *w = managedWindow;
-    BOOL hide = NSApp.active && w.onActiveSpace && (w.styleMask & NSWindowStyleMaskFullScreen);
-    if (hide == changedPresentation) return;
-    changedPresentation = hide;
-    if (hide) {
-        savedPresentation = NSApp.presentationOptions;
-        NSApp.presentationOptions = (savedPresentation & ~(NSApplicationPresentationAutoHideDock |
-            NSApplicationPresentationAutoHideMenuBar)) | NSApplicationPresentationHideDock |
-            NSApplicationPresentationHideMenuBar;
-    } else NSApp.presentationOptions = savedPresentation;
-}
+
+static const NSApplicationPresentationOptions hiddenChrome = NSApplicationPresentationHideDock |
+    NSApplicationPresentationHideMenuBar;
+static const NSApplicationPresentationOptions chromeMask = NSApplicationPresentationHideDock |
+    NSApplicationPresentationHideMenuBar | NSApplicationPresentationAutoHideDock |
+    NSApplicationPresentationAutoHideMenuBar | NSApplicationPresentationAutoHideToolbar;
 
 @interface NPGameWindowState : NSObject
 @property BOOL layout;
@@ -50,7 +52,16 @@ static void syncPresentation(void) {
 @property BOOL nativeGeometry;
 @property BOOL transitioning;
 @property BOOL pendingEntry;
-@property BOOL activationTried;
+@property BOOL decorated;
+@property BOOL fitPending;
+@property BOOL requestedFullscreen;
+@property BOOL modeToggle;
+@property NSRect windowedFrame;
+@property BOOL startupFocused;
+@property unsigned activationAttempts;
+@property BOOL activationQueued;
+@property BOOL reclaimedLaunchFocus;
+@property NSTimeInterval attachedAt;
 @property BOOL entryQueued;
 @property BOOL closed;
 @property BOOL sentSize;
@@ -71,6 +82,46 @@ static void syncPresentation(void) {
 
 static NPGameWindowState *state(NSWindow *w) {
     return objc_getAssociatedObject(w, &stateKey);
+}
+
+static void syncPresentation(void) {
+    NSWindow *w = managedWindow;
+    NPGameWindowState *s = state(w);
+    BOOL native = (w.styleMask & NSWindowStyleMaskFullScreen) != 0;
+    NSScreen *screen = w.screen;
+    BOOL borderless = w.keyWindow && !s.decorated && screen && NSContainsRect(w.frame, screen.frame);
+    BOOL hide = s && !s.closed && NSApp.active && w.visible && w.onActiveSpace && (native || borderless);
+    if (!hide && !changedPresentation) return;
+
+    NSApplicationPresentationOptions options = NSApp.presentationOptions;
+    NSApplicationPresentationOptions chrome = options & chromeMask;
+    if (hide) {
+        if (!changedPresentation) savedChrome = native ? 0 : chrome;
+        changedPresentation = YES;
+        options = (options & ~chromeMask) | hiddenChrome;
+    } else {
+        changedPresentation = NO;
+        if (chrome != hiddenChrome) return;
+        NSApplicationPresentationOptions restore = savedChrome;
+        if (!(options & NSApplicationPresentationFullScreen)) restore &= ~NSApplicationPresentationAutoHideToolbar;
+        options = (options & ~chromeMask) | restore;
+    }
+    if (options != NSApp.presentationOptions) {
+        NSApp.presentationOptions = options;
+    } else if (hide && !s.transitioning && w.keyWindow &&
+               (NSApp.currentSystemPresentationOptions & hiddenChrome) != hiddenChrome) {
+        // The system can reset presentation while AppKit retains the same request.
+        // Change the request before reapplying it so AppKit publishes it again.
+        NSApp.presentationOptions = (options & ~chromeMask) |
+            NSApplicationPresentationAutoHideDock | NSApplicationPresentationAutoHideMenuBar;
+        NSApp.presentationOptions = options;
+    }
+}
+
+static BOOL wantsFullscreen(NPGameWindowState *s) {
+    // These games can show an undecorated fullscreen window without a
+    // successful exclusive display-mode change.
+    return fullscreenFromWindowStyle ? !s.decorated : atomic_load(&exclusiveMode);
 }
 
 static NSSize logicalSize(NPGameWindowState *s) {
@@ -95,8 +146,10 @@ static void configure(NSWindow *w) {
     if (!s.transitioning) {
         NSWindowStyleMask style = w.styleMask;
         style &= ~(NSWindowStyleMaskUtilityWindow | NSWindowStyleMaskNonactivatingPanel);
-        style |= NSWindowStyleMaskTitled | NSWindowStyleMaskClosable |
-                 NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable;
+        NSWindowStyleMask chrome = NSWindowStyleMaskTitled | NSWindowStyleMaskClosable |
+                                   NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable;
+        if (s.decorated || s.requestedFullscreen || (style & NSWindowStyleMaskFullScreen)) style |= chrome;
+        else style &= ~chrome;
         if (w.styleMask != style) w.styleMask = style;
         w.contentMinSize = NSMakeSize(160, 100);
         w.contentMaxSize = NSMakeSize(CGFLOAT_MAX, CGFLOAT_MAX);
@@ -106,7 +159,7 @@ static void configure(NSWindow *w) {
         BOOL movable = !(style & NSWindowStyleMaskFullScreen);
         if (w.movable != movable) w.movable = movable;
         if (w.movableByWindowBackground) w.movableByWindowBackground = NO;
-        w.hasShadow = YES;
+        w.hasShadow = s.decorated && !(style & NSWindowStyleMaskFullScreen);
         NSWindowCollectionBehavior behavior = w.collectionBehavior;
         behavior &= ~(NSWindowCollectionBehaviorCanJoinAllSpaces |
                       NSWindowCollectionBehaviorMoveToActiveSpace |
@@ -187,9 +240,13 @@ static void attach(NSWindow *w) {
     if (state(w).closed) objc_setAssociatedObject(w, &stateKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     if (state(w) || (managedWindow && managedWindow != w) || !eligible(w) || !looksLikeGame(w)) return;
     NPGameWindowState *s = [NPGameWindowState new];
+    s.attachedAt = NSProcessInfo.processInfo.systemUptime;
     // Wine uses a fixed 2x Retina mode independently of the screen's current scale.
     s.scale = w.contentView.layer.mask.contentsScale >= 2 ? 2 : 1;
+    s.decorated = (w.styleMask & NSWindowStyleMaskTitled) != 0;
+    s.requestedFullscreen = wantsFullscreen(s) || (w.styleMask & NSWindowStyleMaskFullScreen);
     s.pendingEntry = YES;
+    s.fitPending = YES;
     managedWindow = w;
     s.reportedFrame = [w contentRectForFrameRect:w.frame];
     s.reportedFrame = NSMakeRect(NSMinX(s.reportedFrame), NSMaxY(s.reportedFrame) - pixels.height / s.scale,
@@ -198,21 +255,9 @@ static void attach(NSWindow *w) {
     fprintf(stderr, "[native-space] managing %s: %.0fx%.0f pixels, scale %.0f\n", w.title.UTF8String,
             pixels.width, pixels.height, s.scale);
     configure(w);
-    if (!(w.styleMask & NSWindowStyleMaskFullScreen) && !w.zoomed) {
-        NSRect visible = (w.screen ?: NSScreen.mainScreen).visibleFrame;
-        NSSize size = logicalSize(s);
-        CGFloat fit = MIN(1, MIN(visible.size.width * 0.85 / size.width,
-                                 visible.size.height * 0.85 / size.height));
-        if (fit > 0) {
-            NSRect content = NSMakeRect(0, 0, floor(size.width * fit), floor(size.height * fit));
-            NSRect frame = [w frameRectForContentRect:content];
-            frame.origin = NSMakePoint(NSMidX(visible) - frame.size.width / 2,
-                                       NSMidY(visible) - frame.size.height / 2);
-            [w setFrame:frame display:YES];
-        }
-        configure(w);
-    }
+    fitWindow(w);
     report(w, !!(w.styleMask & NSWindowStyleMaskFullScreen), NO, NO);
+    promoteGameProcess();
 }
 
 static void nativeToggle(NSWindow *w, id sender) {
@@ -237,31 +282,146 @@ static BOOL overviewActive(void) {
     return active;
 }
 
-static void scheduleEntry(NSWindow *w);
+static void fitWindow(NSWindow *w) {
+    NPGameWindowState *s = state(w);
+    if (!s.fitPending || s.transitioning || (w.styleMask & NSWindowStyleMaskFullScreen)) return;
+    NSScreen *screen = w.screen ?: NSScreen.mainScreen;
+    if (!screen) return;
+    s.fitPending = NO;
+    NSRect frame = screen.frame;
+    if (s.decorated || s.requestedFullscreen) {
+        NSRect visible = screen.visibleFrame;
+        if (!NSIsEmptyRect(s.windowedFrame)) {
+            frame = s.windowedFrame;
+        } else {
+            NSSize size = logicalSize(s);
+            CGFloat fit = MIN(1, MIN(visible.size.width * 0.85 / size.width,
+                                     visible.size.height * 0.85 / size.height));
+            frame = [w frameRectForContentRect:NSMakeRect(0, 0, floor(size.width * fit), floor(size.height * fit))];
+            frame.origin = NSMakePoint(NSMidX(visible) - frame.size.width / 2,
+                                       NSMidY(visible) - frame.size.height / 2);
+        }
+        s.windowedFrame = frame;
+    }
+    [w setFrame:frame display:YES];
+    configure(w);
+    syncPresentation();
+}
+
+static void activateGameProcess(void) {
+    ProcessSerialNumber process;
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+    if (GetProcessForPID(getpid(), &process) == noErr)
+        SetFrontProcessWithOptions(&process, kSetFrontProcessFrontWindowOnly);
+#pragma clang diagnostic pop
+}
+
+// Single-icon launches inject game-client.dylib, which keeps every Wine process an
+// accessory app so only the launcher shows in the Dock. An accessory app never owns
+// the menu bar and cannot hide it, so the app that was in front keeps its menu bar
+// over the game. Make the game process a regular app. game-client overrides
+// -setActivationPolicy: to turn Regular back into Accessory, so transform directly.
+static void promoteGameProcess(void) {
+    if (NSApp.activationPolicy == NSApplicationActivationPolicyRegular) return;
+    ProcessSerialNumber process;
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+    OSStatus status = GetProcessForPID(getpid(), &process);
+    if (status == noErr) status = TransformProcessType(&process, kProcessTransformToForegroundApplication);
+#pragma clang diagnostic pop
+    fprintf(stderr, "[native-space] made game process a regular app: status %d\n", (int)status);
+    NSString *icon = [NSBundle.mainBundle pathForResource:@"game" ofType:@"icns"];
+    NSImage *image = icon ? [[NSImage alloc] initWithContentsOfFile:icon] : nil;
+    if (image) NSApp.applicationIconImage = image;
+    // The process may already be in front as an accessory; front it again so it
+    // also takes the menu bar.
+    activateGameProcess();
+}
+
+static void requestStartupFocus(NSWindow *w, NPGameWindowState *s) {
+    if (s.startupFocused || s.activationQueued || s.activationAttempts >= 3) return;
+    ++s.activationAttempts;
+    [w makeKeyAndOrderFront:nil];
+    if (s.activationAttempts == 1) {
+        [[NSDistributedNotificationCenter defaultCenter]
+            postNotificationName:@"org.notproton.GameWindowReady" object:nil
+            userInfo:@{@"pid": @(getpid())} deliverImmediately:YES];
+        [NSApp activate];
+    }
+    // [NSApp activate] only succeeds when the app in front yields, which Steam does
+    // only while it is active. Target this process directly once its window exists.
+    if (!NSApp.active) activateGameProcess();
+    s.activationQueued = YES;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 350 * NSEC_PER_MSEC), dispatch_get_main_queue(), ^{
+        s.activationQueued = NO;
+        if (managedWindow == w) scheduleEntry(w);
+    });
+}
+
+// Wine starts each Windows process as its own macOS app outside Launch Services, so
+// nothing activates it, and macOS ignores a background app activating itself. A game's
+// splash, driver-warning dialog or main window then opens behind the app in front,
+// which also keeps that app's menu bar. Bring the process forward once per new window.
+static void frontNewWindow(NSWindow *w) {
+    if (!w.visible || objc_getAssociatedObject(w, &frontedKey) || w.miniaturized ||
+        w.alphaValue == 0 || !eligible(w)) return;
+    objc_setAssociatedObject(w, &frontedKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    if (NSApp.active || overviewActive()) return;
+    fprintf(stderr, "[native-space] bringing new window %s forward\n", w.title.UTF8String);
+    activateGameProcess();
+}
+
 static void tryEntry(NSWindow *w) {
     NPGameWindowState *s = state(w);
-    BOOL ready = s && s.pendingEntry && !s.transitioning && !s.closed && w.visible && !w.miniaturized &&
-                 !NSApp.modalWindow;
-    if (!ready || overviewActive()) return;
+    if (!s.pendingEntry || s.transitioning || s.closed || !w.visible || w.miniaturized ||
+        NSApp.modalWindow || overviewActive()) return;
+    BOOL fullscreen = (w.styleMask & NSWindowStyleMaskFullScreen) != 0;
+    if (!fullscreen && !s.requestedFullscreen) {
+        configure(w);
+        fitWindow(w);
+        report(w, NO, NO, YES);
+    }
     if (!NSApp.active) {
-        if (!s.activationTried) {
-            s.activationTried = YES;
-            [[NSDistributedNotificationCenter defaultCenter]
-                postNotificationName:@"org.notproton.GameWindowReady" object:nil
-                userInfo:@{@"pid": @(getpid())} deliverImmediately:YES];
-            [NSApp activate];
-        }
+        requestStartupFocus(w, s);
         return;
     }
     if (!w.keyWindow) {
         [w makeKeyAndOrderFront:nil];
-        if (!w.keyWindow) return;
+        if (!w.keyWindow) {
+            requestStartupFocus(w, s);
+            return;
+        }
     }
+    s.startupFocused = YES;
     if (!w.onActiveSpace || !(w.occlusionState & NSWindowOcclusionStateVisible)) return;
     s.pendingEntry = NO;
-    if (w.styleMask & NSWindowStyleMaskFullScreen) return;
+    if (s.decorated && !fullscreen && s.requestedFullscreen && !w.zoomed)
+        s.windowedFrame = w.frame;
     configure(w);
+    if (fullscreen == s.requestedFullscreen) {
+        fitWindow(w);
+        report(w, fullscreen, NO, YES);
+        return;
+    }
+    fprintf(stderr, "[native-space] switching to %s\n", s.requestedFullscreen ? "fullscreen" : "desktop");
+    s.modeToggle = YES;
     nativeToggle(w, nil);
+}
+
+void np_game_space_display_mode(bool fullscreen) {
+    atomic_store(&exclusiveMode, fullscreen);
+    CFRunLoopPerformBlock(CFRunLoopGetMain(), kCFRunLoopDefaultMode, ^{
+        NSWindow *w = managedWindow;
+        NPGameWindowState *s = state(w);
+        if (s && !fullscreenFromWindowStyle && s.requestedFullscreen != wantsFullscreen(s)) {
+            s.requestedFullscreen = wantsFullscreen(s);
+            s.fitPending = YES;
+            s.pendingEntry = YES;
+            scheduleEntry(w);
+        }
+    });
+    CFRunLoopWakeUp(CFRunLoopGetMain());
 }
 
 static void scheduleEntry(NSWindow *w) {
@@ -287,6 +447,7 @@ static BOOL gameSized(NSWindow *w) {
 static void (*originalDraw)(id, SEL);
 static void drawn(NSWindow *w, SEL cmd) {
     originalDraw(w, cmd);
+    frontNewWindow(w);
     if (w.visible && (w.keyWindow || !managedWindow)) {
         attach(w);
         scheduleEntry(w);
@@ -316,6 +477,7 @@ static void enterFailed(NSWindow *w, SEL cmd, NSWindow *window) {
     NPGameWindowState *s = state(w);
     if (s) fprintf(stderr, "[native-space] AppKit rejected fullscreen entry\n");
     s.transitioning = NO;
+    s.modeToggle = NO;
     configure(w);
 }
 static void (*originalExitFailed)(id, SEL, NSWindow *);
@@ -324,6 +486,7 @@ static void exitFailed(NSWindow *w, SEL cmd, NSWindow *window) {
     NPGameWindowState *s = state(w);
     if (s) fprintf(stderr, "[native-space] AppKit rejected fullscreen exit\n");
     s.transitioning = NO;
+    s.modeToggle = NO;
     configure(w);
 }
 
@@ -366,9 +529,23 @@ static void wineFrame(NSWindow *w, SEL cmd, NSRect rect) {
 static void (*originalFeatures)(id, SEL, const void *);
 static void features(NSWindow *w, SEL cmd, const void *p) {
     NPGameWindowState *s = state(w);
+    BOOL decorated = s.decorated;
+    if (s && p) {
+        unsigned int flags;
+        memcpy(&flags, p, sizeof flags);
+        s.decorated = (flags & 1u) != 0; // macdrv_window_features.title_bar
+    }
     s.gameMutation = YES;
     originalFeatures(w, cmd, p);
     s.gameMutation = NO;
+    if (s && s.decorated != decorated) {
+        if (decorated && !s.transitioning && !(w.styleMask & NSWindowStyleMaskFullScreen) && !w.zoomed)
+            s.windowedFrame = w.frame;
+        s.requestedFullscreen = !s.decorated && wantsFullscreen(s);
+        s.fitPending = YES;
+        s.pendingEntry = YES;
+        scheduleEntry(w);
+    }
     configure(w);
 }
 static void (*originalState)(id, SEL, const void *);
@@ -388,11 +565,8 @@ static void (*originalStyle)(id, SEL, NSWindowStyleMask);
 static void style(NSWindow *w, SEL cmd, NSWindowStyleMask mask) {
     NPGameWindowState *s = state(w);
     if (s.gameMutation && !s.layout) {
-        // A game's windowed/borderless changes must not tear down a native Space.
-        mask = (mask & ~NSWindowStyleMaskFullScreen) | (w.styleMask & NSWindowStyleMaskFullScreen);
-        mask |= NSWindowStyleMaskTitled | NSWindowStyleMaskClosable |
-                NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable;
-        mask &= ~(NSWindowStyleMaskUtilityWindow | NSWindowStyleMaskNonactivatingPanel);
+        // AppKit applies the chrome change after the current Space transition.
+        mask = w.styleMask;
     }
     originalStyle(w, cmd, mask);
 }
@@ -402,6 +576,7 @@ static void toggle(NSWindow *w, SEL cmd, id sender) {
     if (!s) return originalToggle(w, cmd, sender);
     if (s.transitioning || s.closed) return;
     s.pendingEntry = NO;
+    s.requestedFullscreen = !(w.styleMask & NSWindowStyleMaskFullScreen);
     nativeToggle(w, sender);
 }
 static NSSize (*originalFullSize)(id, SEL, NSWindow *, NSSize);
@@ -413,8 +588,7 @@ static NSApplicationPresentationOptions (*originalPresentation)(id, SEL, NSWindo
 static NSApplicationPresentationOptions presentation(NSWindow *w, SEL cmd, NSWindow *window,
                                                      NSApplicationPresentationOptions options) {
     if (!state(w)) return originalPresentation ? originalPresentation(w, cmd, window, options) : options;
-    return (options & ~(NSApplicationPresentationAutoHideDock | NSApplicationPresentationAutoHideMenuBar)) |
-           NSApplicationPresentationHideDock | NSApplicationPresentationHideMenuBar;
+    return (options & ~chromeMask) | hiddenChrome;
 }
 
 static BOOL mouseRects(NSWindow *w, id controller, CGRect *physical, CGRect *logical) {
@@ -674,30 +848,57 @@ static void install(void) {
         NSWindow *w = n.object;
         if (w.visible && !managedWindow) { attach(w); scheduleEntry(w); }
         configure(w);
+        if (w == managedWindow) updateCursorMapping(w);
+    });
+    observe(nc, NSWindowDidMoveNotification, ^(NSNotification *n) {
+        if (n.object == managedWindow) updateCursorMapping(managedWindow);
     });
     observe(nc, NSWindowDidChangeOcclusionStateNotification, ^(NSNotification *n) {
         NSWindow *w = n.object;
+        frontNewWindow(w);
         if (w.visible && !managedWindow) attach(w);
-        if (w == managedWindow) updateCursorMapping(w);
+        if (w == managedWindow) {
+            syncPresentation();
+            updateCursorMapping(w);
+        }
         scheduleEntry(w);
     });
     observe(nc, NSWindowDidChangeBackingPropertiesNotification, ^(NSNotification *n) { configure(n.object); });
     observe(nc, NSWindowWillEnterFullScreenNotification, ^(NSNotification *n) {
-        NPGameWindowState *s = state(n.object); s.transitioning = YES; s.pendingEntry = NO;
+        NPGameWindowState *s = state(n.object);
+        s.transitioning = YES;
+        if (!s.modeToggle) s.requestedFullscreen = YES;
+        s.modeToggle = NO;
     });
     observe(nc, NSWindowWillExitFullScreenNotification, ^(NSNotification *n) {
-        state(n.object).transitioning = YES;
+        NPGameWindowState *s = state(n.object);
+        s.transitioning = YES;
+        if (!s.modeToggle) s.requestedFullscreen = NO;
+        s.modeToggle = NO;
+        s.fitPending = YES;
     });
     for (NSString *name in @[NSWindowDidEnterFullScreenNotification, NSWindowDidExitFullScreenNotification])
         observe(nc, name, ^(NSNotification *n) {
             NSWindow *w = n.object;
             NPGameWindowState *s = state(w);
-            s.transitioning = NO;
-            syncPresentation();
-            if (s) fprintf(stderr, "[native-space] native Space %s\n",
-                           w.styleMask & NSWindowStyleMaskFullScreen ? "entered" : "exited");
-            configure(w);
-            report(w, !!(w.styleMask & NSWindowStyleMaskFullScreen), NO, YES);
+            if (!s) return;
+            // Wine's fullscreen-exit delegate restores its pre-Space frame.
+            // Apply the current game mode after all fullscreen observers finish.
+            CFRunLoopPerformBlock(CFRunLoopGetMain(), kCFRunLoopDefaultMode, ^{
+                s.transitioning = NO;
+                syncPresentation();
+                BOOL fullscreen = (w.styleMask & NSWindowStyleMaskFullScreen) != 0;
+                fprintf(stderr, "[native-space] native Space %s\n", fullscreen ? "entered" : "exited");
+                if (s.closed) return;
+                configure(w);
+                fitWindow(w);
+                report(w, fullscreen, NO, YES);
+                scheduleEntry(w);
+                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 600 * NSEC_PER_MSEC), dispatch_get_main_queue(), ^{
+                    if (managedWindow == w) updateCursorMapping(w);
+                });
+            });
+            CFRunLoopWakeUp(CFRunLoopGetMain());
         });
     observe(nc, NSWindowWillCloseNotification, ^(NSNotification *n) {
         NSWindow *w = n.object;
@@ -725,14 +926,31 @@ static void install(void) {
                 updateCursorMapping(managedWindow);
                 scheduleEntry(managedWindow);
             });
+    observe(NSWorkspace.sharedWorkspace.notificationCenter, NSWorkspaceDidActivateApplicationNotification,
+            ^(NSNotification *n) {
+                NSRunningApplication *app = n.userInfo[NSWorkspaceApplicationKey];
+                NSWindow *w = managedWindow;
+                NPGameWindowState *s = state(w);
+                if (!s.startupFocused || s.closed || s.reclaimedLaunchFocus || !w.visible || w.miniaturized ||
+                    NSApp.modalWindow ||
+                    NSProcessInfo.processInfo.systemUptime - s.attachedAt > 45 || app.processIdentifier == getpid()) return;
+                NSString *bundle = NSBundle.mainBundle.bundleIdentifier;
+                if (![bundle hasPrefix:@"com.notproton.launcher."] || ![app.bundleIdentifier isEqualToString:bundle] ||
+                    overviewActive()) return;
+                s.reclaimedLaunchFocus = YES;
+                fprintf(stderr, "[native-space] returning launch focus from sibling pid %d\n", app.processIdentifier);
+                activateGameProcess();
+            });
     observe(NSDistributedNotificationCenter.defaultCenter, @"com.apple.expose.front.asleep",
             ^(NSNotification *n) { dispatch_async(dispatch_get_main_queue(), ^{ scheduleEntry(NSApp.keyWindow); }); });
     for (NSWindow *w in NSApp.windows) if (w.keyWindow) { attach(w); scheduleEntry(w); }
     // A game's Metal surface can appear after its window was last drawn or resized, with no
     // notification of its own. Re-check until a game window is found.
     [observers addObject:[NSTimer scheduledTimerWithTimeInterval:1 repeats:YES block:^(NSTimer *t) {
-        for (NSWindow *w in NSApp.windows) if (w.visible) hideSliver(w);
-        if (managedWindow) return;
+        for (NSWindow *w in NSApp.windows) if (w.visible) { hideSliver(w); frontNewWindow(w); }
+        // Leaving a native Space settles after its notifications, while the window
+        // is not yet on the active Space, so a pointer mapping taken then is stale.
+        if (managedWindow) { syncPresentation(); updateCursorMapping(managedWindow); return; }
         for (NSWindow *w in NSApp.windows)
             if (w.visible && eligible(w)) { attach(w); if (managedWindow) { scheduleEntry(w); break; } }
     }]];
@@ -801,6 +1019,19 @@ __attribute__((constructor)) static void start(void) {
     if (!np_game_space_size(value, &width, &height)) return;
     pixels = NSMakeSize(width, height);
     np_game_space_set_display_size(width, height);
+    const char *appID = getenv("STEAM_COMPAT_APP_ID");
+    BOOL belowZero = appID && !strcmp(appID, "848450");
+    BOOL source = appID && !strcmp(appID, "240");
+    @autoreleasepool {
+        NSString *bundle = NSBundle.mainBundle.bundleIdentifier;
+        belowZero |= [bundle isEqualToString:@"com.notproton.launcher.848450"];
+        source |= [bundle isEqualToString:@"com.notproton.launcher.240"];
+    }
+    // Source also supports explicit borderless windowed launches.
+    char **argv = *_NSGetArgv();
+    for (int i = 1; source && i < *_NSGetArgc(); i++)
+        if (!strcasecmp(argv[i], "-noborder")) source = NO;
+    fullscreenFromWindowStyle = belowZero || source;
     fprintf(stderr, "[native-space] requested %ux%u in pid %d\n", width, height, getpid());
     _dyld_register_func_for_add_image(imageAdded);
 }
