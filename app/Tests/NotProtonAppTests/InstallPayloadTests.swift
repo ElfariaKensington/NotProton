@@ -12,6 +12,7 @@ struct InstallPayloadTests {
         try files.createDirectory(at: signatureDir, withIntermediateDirectories: true)
         if dylib { try Data("dylib".utf8).write(to: root.appending(path: SupportPaths.dylibName)) }
         if shim { try Data("shim".utf8).write(to: root.appending(path: "overlay-shim.dylib")) }
+        try Data("native space".utf8).write(to: root.appending(path: "native-game-space.dylib"))
         if iconmaker { try Data("iconmaker".utf8).write(to: root.appending(path: "iconmaker")) }
         if appinfo { try Data("appinfo".utf8).write(to: root.appending(path: "appinfo")) }
         try Data("#!/bin/sh\nexit 0\n".utf8).write(to: root.appending(path: "run"))

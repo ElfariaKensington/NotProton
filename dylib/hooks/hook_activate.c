@@ -7,6 +7,8 @@
 #include <dlfcn.h>
 #include <mach-o/dyld.h>
 #include <string.h>
+#include <stdlib.h>
+#include <limits.h>
 #include <unistd.h>
 
 typedef void (*fn_did_become_active)(void *self, void *cmd, void *note);
@@ -45,6 +47,49 @@ static void np_hook_did_become_active(void *self, void *cmd, void *note) {
         return;
     }
     orig_did_become_active(self, cmd, note);
+}
+
+static int np_is_game_launcher(const char *path, const char *root) {
+    size_t length = strlen(root);
+    if (strncmp(path, root, length)) return 0;
+    const char *id = path + length;
+    const char *end = id + strspn(id, "0123456789");
+    return end != id && *end == '/' && strstr(end, ".app/Contents/MacOS/") != NULL;
+}
+
+static void np_game_ready(CFNotificationCenterRef center, void *observer, CFStringRef name,
+                          const void *object, CFDictionaryRef info) {
+    (void)center; (void)observer; (void)name; (void)object;
+    if (!info) return;
+    CFNumberRef number = CFDictionaryGetValue(info, CFSTR("pid"));
+    int pid;
+    if (!number || CFGetTypeID(number) != CFNumberGetTypeID() ||
+        !CFNumberGetValue(number, kCFNumberIntType, &pid) || pid <= 0 || pid == getpid()) return;
+
+    void *app = np_msg(np_get_class("NSApplication"), "sharedApplication");
+    if (!((signed char (*)(void *, void *))np_msg_send)(app, np_sel("isActive"))) return;
+    void *target = ((void *(*)(void *, void *, int))np_msg_send)(
+        np_get_class("NSRunningApplication"), np_sel("runningApplicationWithProcessIdentifier:"), pid);
+    CFURLRef executable = target ? np_msg(target, "executableURL") : NULL;
+    char path[PATH_MAX], root[PATH_MAX];
+    const char *home = getenv("HOME");
+    if (!home || !executable || !CFURLGetFileSystemRepresentation(executable, true, (UInt8 *)path, sizeof path))
+        return;
+    int length = snprintf(root, sizeof root, "%s/Library/Application Support/notproton/launchers/", home);
+    if (length < 0 || (size_t)length >= sizeof root || !np_is_game_launcher(path, root)) return;
+
+    ((void (*)(void *, void *, void *))np_msg_send)(app, np_sel("yieldActivationToApplication:"), target);
+    void *current = np_msg(np_get_class("NSRunningApplication"), "currentApplication");
+    if (((signed char (*)(void *, void *, void *, unsigned long))np_msg_send)(
+            target, np_sel("activateFromApplication:options:"), current, 0))
+        NP_LOG("[activate] requested game focus handoff to pid %d", pid);
+}
+
+static void np_game_focus_install_main(void *unused) {
+    (void)unused;
+    CFNotificationCenterAddObserver(CFNotificationCenterGetDistributedCenter(), &np_watcher, np_game_ready,
+                                   CFSTR("org.notproton.GameWindowReady"), NULL,
+                                   CFNotificationSuspensionBehaviorDeliverImmediately);
 }
 
 static void np_activate_install_main(void *unused) {
@@ -112,5 +157,6 @@ void np_hooks_activate_install(void) {
         NP_WARN("[activate] objc runtime unavailable, not hooked");
         return;
     }
+    dispatch_async_f(dispatch_get_main_queue(), NULL, np_game_focus_install_main);
     _dyld_register_func_for_add_image(np_activate_image_added);
 }

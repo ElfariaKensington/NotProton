@@ -1,3 +1,5 @@
+#include "game_space_ui.h"
+
 // Enables Steam Play in the UI/enables the Compatibility tab in game properties
 #include "webpatch.h"
 #include "compatsvc.h"
@@ -1458,11 +1460,13 @@ static int out_expand(np_out_t *o, const char *replace, const np_cap_t *caps) {
     "G=k=>\"DXMT_CONFIG\"===k?mergedDxmt:has(k)?g(k):DF[k]||\"\";" \
     "if(t.unAppID<2147483648&&(t.vecPlatforms||[]).indexOf(\"osx\")>=0" \
     "&&!t.strCompatToolName)return null;" \
-    "return MSCXPanel({fex,get:G,saved:g,set:L.s,clearUnused:1,dev:1,tool:tn," \
+    "const panel=MSCXPanel({fex,get:G,saved:g,set:L.s,clearUnused:1,dev:1,tool:tn," \
     "ours:tn===\"" NP_FALLBACK_TOOL "\"||!!ot," \
     "dflt:lost?null:k=>DF[k],target:(" NP_CX_TARGET ")(o,t.unAppID,t.strInstallFolder||\"\"),head:" \
     "typeof MSCXPrefixRow==\"function\"&&(0," RT ".jsx)(\"div\",{className:\"MSCXRow\",ref:e=>e&&MSCXPrefixRow(e,t.unAppID)},\"npstate\")" \
-    "})}"
+    "});if(!panel||!(tn===\"" NP_FALLBACK_TOOL "\"||!!ot))return panel;" \
+    "return(0," RT ".jsx)(\"div\",{...panel.props,children:(0," RT ".jsxs)(" RT ".Fragment," \
+    "{children:panel.props.children.props.children.concat([" NP_GAME_SPACE_ROW(RT) "])})})}"
 
 // React breaks if the hook count changes between renders, so the hooks wait in their own component
 // until Steam's globals exist.

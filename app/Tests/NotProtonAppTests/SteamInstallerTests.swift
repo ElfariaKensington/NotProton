@@ -36,6 +36,7 @@ struct SteamInstallerTests {
 
         let shim = root.appending(path: "overlay-shim.dylib")
         try FileManager.default.copyItem(at: dylib, to: shim)
+        try FileManager.default.copyItem(at: dylib, to: root.appending(path: "native-game-space.dylib"))
 
         let iconmaker = root.appending(path: "iconmaker")
         try FileManager.default.copyItem(at: dylib, to: iconmaker)
@@ -152,6 +153,7 @@ struct SteamInstallerTests {
         let files = FileManager.default
         #expect(files.fileExists(atPath: fixture.deployedDylib.path(percentEncoded: false)))
         #expect(files.fileExists(atPath: fixture.overlayShim.path(percentEncoded: false)))
+        #expect(files.fileExists(atPath: fixture.support.appending(path: "native-game-space.dylib").path(percentEncoded: false)))
         #expect(files.fileExists(atPath: fixture.iconmaker.path(percentEncoded: false)))
         #expect(files.fileExists(atPath: fixture.appinfo.path(percentEncoded: false)))
         #expect(

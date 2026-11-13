@@ -3045,6 +3045,46 @@ if [ "$foreground" = 0 ]; then
   exit $status
 fi
 
+# Native game-window presentation is opt-in and inherited by game subprocesses.
+NOTPROTON_NATIVE_SPACE_LIBRARY=""
+if [ -n "${NOTPROTON_NATIVE_SIZE:-}" ]; then
+  np_native_valid=0
+  case "$NOTPROTON_NATIVE_SIZE" in
+    *[!0-9x]*|*x*x*|x*|*x) ;;
+    *x*)
+      np_native_w=${NOTPROTON_NATIVE_SIZE%%x*}
+      np_native_h=${NOTPROTON_NATIVE_SIZE#*x}
+      if [ "${#np_native_w}" -le 5 ] && [ "${#np_native_h}" -le 5 ] \
+        && [ "$np_native_w" -ge 320 ] && [ "$np_native_w" -le 16384 ] \
+        && [ "$np_native_h" -ge 200 ] && [ "$np_native_h" -le 16384 ]; then
+        np_native_valid=1
+      fi ;;
+  esac
+  if [ "$np_native_valid" != 1 ]; then
+    show_alert "Invalid game resolution" "Choose a width of 320-16384 and a height of 200-16384 pixels in this game's Compatibility settings."
+    exit 1
+  fi
+  NOTPROTON_NATIVE_SPACE_LIBRARY="$np_support/native-game-space.dylib"
+  if [ ! -f "$NOTPROTON_NATIVE_SPACE_LIBRARY" ]; then
+    show_alert "Native game Space is missing" "Install this NotProton build before using the game resolution setting."
+    exit 1
+  fi
+  case "$NOTPROTON_NATIVE_SPACE_LIBRARY" in
+    *:*) show_alert "Unsupported installation path" "Native game Spaces require a support path without a colon."; exit 1 ;;
+  esac
+fi
+# Counter-Strike: Source takes an explicit startup backbuffer size.
+# Put the selection first among game arguments for Source's first-match lookup.
+case "$app_id:${target##*/}" in
+  240:cstrike.exe|240:cstrike_win64.exe|240:hl2.exe)
+    if [ -n "$NOTPROTON_NATIVE_SPACE_LIBRARY" ]; then
+      shift
+      set -- "$target" -width "$np_native_w" -height "$np_native_h" "$@"
+    fi
+    ;;
+esac
+export NOTPROTON_NATIVE_SIZE NOTPROTON_NATIVE_SPACE_LIBRARY
+
 # Fixes CrossOver window focus issues
 steam_root="$(dirname "$(dirname "$(dirname "$STEAM_COMPAT_DATA_PATH")")")"
 manifest="$steam_root/steamapps/appmanifest_$app_id.acf"
@@ -3060,6 +3100,18 @@ fi
 np_game_names
 loader_root="$HOME/Library/Application Support/notproton/launchers/$app_id"
 mkdir -p "$loader_root"
+# Publish the fallback before Wine starts. Each read sees one complete launch value.
+np_native_manifest="$loader_root/.native-game-space"
+if [ -n "$NOTPROTON_NATIVE_SPACE_LIBRARY" ]; then
+  np_native_tmp=$(mktemp "$loader_root/.native-game-space.XXXXXX")
+  if ! printf '%s\n' "$NOTPROTON_NATIVE_SIZE" > "$np_native_tmp" ||
+     ! mv -f "$np_native_tmp" "$np_native_manifest"; then
+    rm -f "$np_native_tmp"
+    exit 1
+  fi
+else
+  rm -f "$np_native_manifest"
+fi
 loader_app="$loader_root/$bundle_name.app"
 np_cursor_helper="$np_support/bridge/game-cursor.dylib"
 np_game_host="$np_support/bridge/game-host"
@@ -3188,6 +3240,9 @@ fi
 cursor_helper="\$(dirname "\$WINELOADER")/game-cursor.dylib"
 if [ -f "\$cursor_helper" ]; then
   export DYLD_INSERT_LIBRARIES="\${DYLD_INSERT_LIBRARIES:+\$DYLD_INSERT_LIBRARIES:}\$cursor_helper"
+fi
+if [ -n "\$NOTPROTON_NATIVE_SIZE" ] && [ -f "\$NOTPROTON_NATIVE_SPACE_LIBRARY" ]; then
+  export DYLD_INSERT_LIBRARIES="\${DYLD_INSERT_LIBRARIES:+\$DYLD_INSERT_LIBRARIES:}\$NOTPROTON_NATIVE_SPACE_LIBRARY"
 fi
 [ -n "\$NOTPROTON_GAME_CWD" ] && cd "\$NOTPROTON_GAME_CWD"
 exec "$WINELOADER" "\$@"
@@ -3628,6 +3683,7 @@ if [ -n "$game_runner" ]; then
   # FEX's wine ignores DYLD_INSERT_LIBRARIES, lsteamclient loads the overlay there
   [ "${wine_unix##*/}" = x86_64-unix ] || inserts=""
   [ -z "$np_feat_dylibs" ] || inserts="${inserts:+$inserts:}$np_feat_dylibs"
+  [ -z "$NOTPROTON_NATIVE_SPACE_LIBRARY" ] || inserts="${inserts:+$inserts:}$NOTPROTON_NATIVE_SPACE_LIBRARY"
   np_started=$(date +%s)
   np_terminated=0
   np_timing launching-bundle
@@ -3688,6 +3744,8 @@ NP_FEAT_ENVS
     --env STEAM_COMPAT_CLIENT_INSTALL_PATH="$STEAM_COMPAT_CLIENT_INSTALL_PATH" \
     --env STEAM_COMPAT_APP_ID="$STEAM_COMPAT_APP_ID" \
     --env STEAM_DYLD_INSERT_LIBRARIES="$STEAM_DYLD_INSERT_LIBRARIES" \
+    --env NOTPROTON_NATIVE_SIZE="${NOTPROTON_NATIVE_SIZE:-}" \
+    --env NOTPROTON_NATIVE_SPACE_LIBRARY="$NOTPROTON_NATIVE_SPACE_LIBRARY" \
     --env NOTPROTON_FEATURE_DYLIBS="$np_feat_dylibs" \
     --env NOTPROTON_GAME_CWD="$game_cwd" "$@"
   np_started=$(date +%s)
