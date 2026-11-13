@@ -369,6 +369,10 @@ pick() {
 pick /cx/lib/wine/aarch64-unix ""
 is "FEX runner" "$T/game/runner" "$game_runner"
 is "Dock tile hidden" "  <key>LSUIElement</key><true/>" "$uielement_arg"
+np_cursor_helper="$T/cursor-helper.dylib"; : > "$np_cursor_helper"
+pick /cx/lib/wine/aarch64-unix ""
+is "cursor helper uses the game launcher" "|launcher" "$game_runner|$bundle_exec"
+np_cursor_helper="$T/no-cursor-helper"
 pick /cx/lib/wine/aarch64-unix /extra
 is "own WINEDLLPATH" "" "$game_runner"
 pick /cx/lib/wine/x86_64-unix ""

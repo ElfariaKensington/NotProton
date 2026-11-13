@@ -3061,6 +3061,7 @@ np_game_names
 loader_root="$HOME/Library/Application Support/notproton/launchers/$app_id"
 mkdir -p "$loader_root"
 loader_app="$loader_root/$bundle_name.app"
+np_cursor_helper="$np_support/bridge/game-cursor.dylib"
 np_game_host="$np_support/bridge/game-host"
 np_game_client="$np_support/bridge/game-client.dylib"
 np_single_icon=0
@@ -3071,7 +3072,7 @@ game_runner=""
 display_name_xml=$game_name_xml
 localized_arg=""
 uielement_arg=""
-if [ -z "$user_dllpath" ] && [ "$np_single_icon" != 1 ]; then
+if [ -z "$user_dllpath" ] && [ "$np_single_icon" != 1 ] && [ ! -f "$np_cursor_helper" ]; then
   game_runner="$loader_root/runner"
   game_app="$game_runner/lib/wine/${wine_unix##*/}/wine.app"
   # Begone, unwanted Wine processes! Stay out of my dock!
@@ -3085,11 +3086,12 @@ elif [ "${NOTPROTON_HIDE_LAUNCHER_TILE:-0}" = "1" ]; then
   echo "launcher tile hidden by NOTPROTON_HIDE_LAUNCHER_TILE" >> "$log" 2>&1 || true
 fi
 np_bundle_cache="$loader_root/.notproton-bundle-cache.json"
-np_bundle_parameters="$game_name|$meta_icon|$meta_clienticon|${NOTPROTON_HIDE_LAUNCHER_TILE:-0}|$np_single_icon|$WINELOADER"
+np_bundle_parameters="$game_name|$meta_icon|$meta_clienticon|${NOTPROTON_HIDE_LAUNCHER_TILE:-0}|$np_single_icon|$([ ! -f "$np_cursor_helper" ] || printf cursor)|$WINELOADER"
 np_bundle_stamp() {
   set -- "$1" "$np_bundle_cache" "$np_bundle_parameters" "$2" "$0" "$loader_app" "$wine_unix" "$loader_root/game.icns" "$loader_root/notproton-icon.source" "$client_root/appcache/librarycache/$app_id"
   # Rebuild the cached launcher when its single-icon helpers are updated.
   [ "$np_single_icon" != 1 ] || set -- "$@" "$np_game_host" "$np_game_client"
+  [ ! -f "$np_cursor_helper" ] || set -- "$@" "$np_cursor_helper"
   np_cache "$@"
 }
 if [ -z "$game_runner" ] && np_cached_env=$(np_bundle_stamp read ""); then
@@ -3157,7 +3159,11 @@ if [ -z "$game_runner" ]; then
     echo "loader staging failed, game mode unavailable" >> "$log" 2>&1 || true
   fi
 
-  cat > "$loader_macos/launcher" <<LAUNCHER
+# Automatic cursor handling is confined to this game's Wine process tree.
+if [ -f "$np_cursor_helper" ]; then
+  cp "$np_cursor_helper" "$loader_macos/game-cursor.dylib"
+fi
+cat > "$loader_macos/launcher" <<LAUNCHER
 #!/bin/sh
 $(np_handoff "$steam_url")
 export WINELOADER="$WINELOADER"
@@ -3178,6 +3184,10 @@ fi
 if [ -n "\$NOTPROTON_GAME_CHANNEL" ]; then
   client="\$(dirname "\$WINELOADER")/game-client.dylib"
   export DYLD_INSERT_LIBRARIES="\${DYLD_INSERT_LIBRARIES:+\$DYLD_INSERT_LIBRARIES:}\$client"
+fi
+cursor_helper="\$(dirname "\$WINELOADER")/game-cursor.dylib"
+if [ -f "\$cursor_helper" ]; then
+  export DYLD_INSERT_LIBRARIES="\${DYLD_INSERT_LIBRARIES:+\$DYLD_INSERT_LIBRARIES:}\$cursor_helper"
 fi
 [ -n "\$NOTPROTON_GAME_CWD" ] && cd "\$NOTPROTON_GAME_CWD"
 exec "$WINELOADER" "\$@"
