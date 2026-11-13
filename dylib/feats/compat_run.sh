@@ -2727,9 +2727,10 @@ if [ -n "$STEAM_COMPAT_DATA_PATH" ]; then
     echo "avx: ROSETTA_ADVERTISE_AVX=$ROSETTA_ADVERTISE_AVX from $avx_from" >> "$log" 2>&1 || true
   fi
   # Reuse the install-script server when its boot environment is identical.
-  server_config=$(printf '%s\n' "$CX_ROOT" "$WINEMSYNC" "$ROSETTA_ADVERTISE_AVX" "$FEX_X87REDUCEDPRECISION")
+  np_server_stamp=$(stat -f '%d:%i:%m' "$WINELOADER" "$WINESERVER" "$CX_ROOT/share/wine/wine.inf" 2>/dev/null || true)
+  server_config=$(printf '%s\n' "$CX_ROOT" "$WINEMSYNC" "$ROSETTA_ADVERTISE_AVX" "$FEX_X87REDUCEDPRECISION" "$np_server_stamp")
   server_record="$STEAM_COMPAT_DATA_PATH/notproton-server-config"
-  if [ "$(cat "$server_record" 2>/dev/null)" != "$server_config" ]; then
+  if [ -z "$np_server_stamp" ] || ! prefix_up_to_date || [ "$(cat "$server_record" 2>/dev/null)" != "$server_config" ]; then
     without_lock_fds "$WINESERVER" -k >> "$log" 2>&1 || true
     without_lock_fds "$WINESERVER" -w >> "$log" 2>&1 || true
     printf '%s\n' "$server_config" > "$server_record" || true
@@ -3211,11 +3212,11 @@ if [ -z "$game_runner" ]; then
     echo "loader staging failed, game mode unavailable" >> "$log" 2>&1 || true
   fi
 
-# Automatic cursor handling is confined to this game's Wine process tree.
-if [ -f "$np_cursor_helper" ]; then
-  cp "$np_cursor_helper" "$loader_macos/game-cursor.dylib"
-fi
-cat > "$loader_macos/launcher" <<LAUNCHER
+  # Automatic cursor handling is confined to this game's Wine process tree.
+  if [ -f "$np_cursor_helper" ]; then
+    cp "$np_cursor_helper" "$loader_macos/game-cursor.dylib"
+  fi
+  cat > "$loader_macos/launcher" <<LAUNCHER
 #!/bin/sh
 $(np_handoff "$steam_url")
 export WINELOADER="$WINELOADER"
@@ -3247,6 +3248,7 @@ fi
 [ -n "\$NOTPROTON_GAME_CWD" ] && cd "\$NOTPROTON_GAME_CWD"
 exec "$WINELOADER" "\$@"
 LAUNCHER
+  chmod +x "$loader_macos/launcher"
   if [ "$np_single_icon" = 1 ]; then
     mv "$loader_macos/launcher" "$loader_macos/wine-launch.sh"
     cp "$np_game_host" "$loader_macos/launcher"

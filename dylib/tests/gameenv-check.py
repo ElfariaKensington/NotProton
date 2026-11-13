@@ -7,7 +7,12 @@ import tempfile
 
 source = Path('dylib/feats/compat_run.sh').read_text()
 reader = source[source.index('np_game_env_text=""'):source.index('np_from_defaults() {')]
-forward = source[source.index('# Forward custom names'):source.index('# Prepended first')]
+reserved = source[source.index('np_env_reserved() {'):source.index('np_feat_dir=')]
+collect = source[source.index('np_game_env_names=""'):source.index('np_env_names=""')]
+open_start = source.index('  while IFS= read -r pair; do', source.index('  set -- --args "$shim_exe" "$@"'))
+forward = source[open_start:source.index('# Prepended first', open_start)]
+direct_start = source.index('   while IFS= read -r pair; do', source.index('game_cwd="$(pwd)"'))
+direct = source[direct_start:source.index('   while IFS= read -r np_feat_pair; do', direct_start)]
 with tempfile.TemporaryDirectory(prefix='notproton-env-') as root:
     path = Path(root)
     marker = path / 'must-not-exist'
@@ -18,7 +23,7 @@ with tempfile.TemporaryDirectory(prefix='notproton-env-') as root:
             'PATH=/bad\nWINEPREFIX=/bad\nNOTPROTON_GAME_CWD=/bad\nBAD-NAME=no\n'
             'LAST=no-newline')
     (path / 'notproton.env').write_text(text)
-    script = reader + '\nset -- game.exe "argument with spaces"\n' + forward + '''
+    script = reader + reserved + collect + '\nset -- game.exe "argument with spaces"\n' + forward + '''
     printf '%s\\0' "$WINEMSYNC" "$WINEDEBUG" "$DXMT_CONFIG" "$log" "$@"
     '''
     env = dict(os.environ, STEAM_COMPAT_DATA_PATH=root, verb='waitforexitandrun', log='launcher-log')
@@ -33,10 +38,7 @@ with tempfile.TemporaryDirectory(prefix='notproton-env-') as root:
         LITERAL=f'$(touch {marker}); `touch {marker}` $HOME "quoted"',
         UNICODE='Türkçe 日本語', name='game-name', log='game-log', LAST='no-newline'), forwarded
     # Exercise the copied-runner branch without invoking the game.
-    direct_start = source.index('   while IFS= read -r np_game_env_line; do', source.index('game_cwd="$(pwd)"'))
-    direct_end = source.index('   while IFS= read -r np_feat_pair; do', direct_start)
-    direct = source[direct_start:direct_end]
-    direct_script = reader + '\nnp_game_env_pairs=""\n' + collect + '\nset -- /wine game.exe "argument with spaces"\n' + direct + "\nprintf '%s\\0' \"$@\"\n"
+    direct_script = reader + reserved + collect + '\nset -- /wine game.exe "argument with spaces"\n' + direct + "\nprintf '%s\\0' \"$@\"\n"
     values = subprocess.check_output(['sh', '-ec', direct_script], env=env).decode().split('\0')[:-1]
     assert values[-3:] == ['/wine', 'game.exe', 'argument with spaces'], values
     assert dict(item.split('=',1) for item in values[:-3]) == forwarded, values
