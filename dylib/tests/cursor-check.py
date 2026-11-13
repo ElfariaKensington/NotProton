@@ -19,11 +19,12 @@ with tempfile.TemporaryDirectory(prefix='np-cursor-') as directory:
         result=subprocess.check_output([str(fixture),'--classify',image],text=True).strip()
         assert result==expected,(image,result)
     source=(ROOT/'dylib/feats/compat_run.sh').read_text()
+    handoff = re.search(r'^np_handoff\(\) \{.*?^\}', source, re.M | re.S)[0]
     launcher=re.search(r'cat > "\$loader_macos/launcher" <<LAUNCHER\n.*?\nLAUNCHER',source,re.S)[0]
     macos=root/'Game.app/Contents/MacOS';macos.mkdir(parents=True)
     loader=macos/'wine';loader.write_text('#!/bin/sh\nprintf "%s\\n" "$DYLD_INSERT_LIBRARIES"\nprintf "arg=%s\\n" "$@"\n');loader.chmod(0o755)
     env=dict(os.environ,loader_macos=str(macos),loader_root=str(root),WINELOADER=str(loader))
-    subprocess.run(['sh','-ec',launcher],env=env,check=True);(macos/'launcher').chmod(0o755)
+    subprocess.run(['sh','-ec',handoff+'\n'+launcher],env=env,check=True);(macos/'launcher').chmod(0o755)
     # Inspect the generated shell's exports in-process: SIP strips DYLD variables
     # when invoking /bin/sh, so a second shell cannot stand in for an unsigned Wine loader.
     path=macos/'launcher'
