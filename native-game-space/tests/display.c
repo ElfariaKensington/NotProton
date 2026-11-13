@@ -5,6 +5,12 @@
 #include <stdlib.h>
 #include <unistd.h>
 
+static bool requested_fullscreen;
+
+void np_game_space_display_mode(bool fullscreen) {
+    requested_fullscreen = fullscreen;
+}
+
 void np_game_space_map_cursor(int32_t *x, int32_t *y) {
     *x += 100;
     *y += 200;
@@ -122,7 +128,10 @@ int main(int argc, char **argv) {
     modes[0].device[0] = '2';
     modes[1].device[0] = '1';
     const uint16_t primary[] = {'1', 0};
+    assert(driver.change_settings(modes, primary, NULL, 4, NULL) == 0);
+    assert(requested_fullscreen);
     assert(driver.change_settings(modes, primary, NULL, 0, NULL) == 0);
+    assert(!requested_fullscreen);
     assert(modes[0].width == 1920 && modes[0].height == 1080);
     assert(modes[1].width == 3841 && modes[1].height == 2161);
     puts("native game Space config and Wine display callbacks passed");

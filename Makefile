@@ -575,7 +575,7 @@ NATIVE_SPACE := $(OUT_DIR)/native-game-space.dylib
 NATIVE_SPACE_SRC := native-game-space/game_space.m native-game-space/display.c dylib/core/macho.c
 NATIVE_SPACE_FLAGS := -mmacosx-version-min=$(MIN_VER) $(AVAIL) -dynamiclib -O2 -fobjc-arc \
                       -Wall -Wextra -Wno-unused-parameter -install_name @rpath/native-game-space.dylib \
-                      -framework AppKit -framework QuartzCore
+                      -framework AppKit -framework QuartzCore -framework ApplicationServices
 
 .PHONY: native-game-space native-game-space-install native-game-space-check
 native-game-space: $(NATIVE_SPACE)

@@ -79,7 +79,6 @@ static uint32_t update(const struct np_device_manager *manager, void *param) {
 static int32_t change(struct np_devmode *modes, const uint16_t *primary,
                       void *window, uint32_t flags, void *param) {
     (void)window;
-    (void)flags;
     (void)param;
     // Wine can restore a stale registry mode. Keep the primary on the selected
     // size in the mode array it commits to the guest display state.
@@ -92,6 +91,7 @@ static int32_t change(struct np_devmode *modes, const uint16_t *primary,
         mode->width = width;
         mode->height = height;
     }
+    np_game_space_display_mode((flags & 4u) != 0); // CDS_FULLSCREEN
     return 0;
 }
 

@@ -3,6 +3,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <stdbool.h>
 
 // Wine 11.15 gdi_driver.h, driver ABI 110 (also used by CrossOver 27.0.0.41069).
 // Only the display callbacks and fields used here are named.
@@ -42,6 +43,7 @@ _Static_assert(offsetof(struct np_user_driver, change_settings) == 0x3a0 &&
 void np_game_space_set_driver(const struct np_user_driver *driver, unsigned version);
 void np_game_space_set_display_size(unsigned width, unsigned height);
 extern void *np_game_space_original_registration;
+void np_game_space_display_mode(bool fullscreen);
 void np_game_space_map_cursor(int32_t *x, int32_t *y);
 
 #endif
