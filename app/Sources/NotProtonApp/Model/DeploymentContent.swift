@@ -165,6 +165,7 @@ enum DeploymentContent {
             File(source: payload.dylib, destination: SupportPaths.Steam.deployedDylib(inBundle: app),
                  name: "notproton.dylib", allowsResigning: true),
             File(source: payload.overlayShim, destination: overlayShim, name: "overlay-shim.dylib"),
+            File(source: payload.nativeGameSpace, destination: overlayShim.deletingLastPathComponent().appending(path: "native-game-space.dylib"), name: "native-game-space.dylib"),
             File(source: payload.iconmaker, destination: iconmaker, name: "iconmaker", executable: true),
             File(source: payload.appinfo, destination: appinfo, name: "appinfo", executable: true),
         ]

@@ -32,6 +32,9 @@ const char *np_import_stub_symbol(const struct mach_header_64 *mh, intptr_t slid
 uintptr_t np_import_stub_for_symbol(const struct mach_header_64 *mh, intptr_t slide,
                                     const char *symbol);
 
+int np_rebind_import_with_original(const struct mach_header_64 *mh, intptr_t slide,
+                                   const char *symbol, void *replacement, void **original);
+
 int np_rebind_import(const struct mach_header_64 *mh, intptr_t slide,
                      const char *symbol, void *replacement);
 

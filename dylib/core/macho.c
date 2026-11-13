@@ -380,8 +380,8 @@ uintptr_t np_import_stub_for_symbol(const struct mach_header_64 *mh, intptr_t sl
     return found;
 }
 
-int np_rebind_import(const struct mach_header_64 *mh, intptr_t slide,
-                     const char *symbol, void *replacement) {
+int np_rebind_import_with_original(const struct mach_header_64 *mh, intptr_t slide,
+                     const char *symbol, void *replacement, void **original) {
     if (!mh || !symbol || !replacement) return -1;
 
     symbols_t syms;
@@ -419,6 +419,8 @@ int np_rebind_import(const struct mach_header_64 *mh, intptr_t slide,
                 uintptr_t page = (uintptr_t)&slots[k] & ~(uintptr_t)(getpagesize() - 1);
                 if (mprotect((void *)page, (size_t)getpagesize(), PROT_READ | PROT_WRITE) != 0)
                     continue;
+                if (original && !*original && slots[k] != replacement)
+                    *original = slots[k];
                 slots[k] = replacement;
                 if (strcmp(seg->segname, "__DATA_CONST") == 0)
                     mprotect((void *)page, (size_t)getpagesize(), PROT_READ);
@@ -427,4 +429,9 @@ int np_rebind_import(const struct mach_header_64 *mh, intptr_t slide,
         }
     }
     return rebound;
+}
+
+int np_rebind_import(const struct mach_header_64 *mh, intptr_t slide,
+                     const char *symbol, void *replacement) {
+    return np_rebind_import_with_original(mh, slide, symbol, replacement, NULL);
 }

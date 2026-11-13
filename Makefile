@@ -429,7 +429,7 @@ ACTIVATECHECK := $(OUT_DIR)/activatecheck
 activatecheck:
 	@if [ ! -f dylib/tests/activatecheck.c ]; then $(call SKIP,activatecheck,dylib/tests/activatecheck.c); exit 0; fi; \
 	mkdir -p $(OUT_DIR) && \
-	$(TEST_CC) -O1 -o $(ACTIVATECHECK) dylib/tests/activatecheck.c -framework AppKit -lobjc && \
+	$(TEST_CC) -O1 -o $(ACTIVATECHECK) dylib/tests/activatecheck.c -framework AppKit -framework CoreFoundation -lobjc && \
 	$(ACTIVATECHECK)
 
 SPAWN_ENV := $(OUT_DIR)/spawn-env
@@ -556,6 +556,36 @@ OVERLAY_SHIM_TESTS := overlay-shim/tests
 OVERLAY_SHIM_TEST_FLAGS := -mmacosx-version-min=$(MIN_VER) -O2 -Wall -Wextra \
                       -framework Metal -framework Foundation -framework QuartzCore -framework CoreGraphics
 
+NATIVE_SPACE := $(OUT_DIR)/native-game-space.dylib
+NATIVE_SPACE_SRC := native-game-space/game_space.m native-game-space/display.c dylib/core/macho.c
+NATIVE_SPACE_FLAGS := -mmacosx-version-min=$(MIN_VER) $(AVAIL) -dynamiclib -O2 -fobjc-arc \
+                      -Wall -Wextra -Wno-unused-parameter -install_name @rpath/native-game-space.dylib \
+                      -framework AppKit -framework QuartzCore
+
+.PHONY: native-game-space native-game-space-install native-game-space-check
+native-game-space: $(NATIVE_SPACE)
+
+native-game-space-check:
+	@mkdir -p $(OUT_DIR)
+	@$(TEST_CC) native-game-space/tests/emit.c -o $(OUT_DIR)/game-space-ui-emit
+	@node native-game-space/tests/ui.js $(OUT_DIR)/game-space-ui-emit
+	@$(TEST_CC) -Wall -Wextra native-game-space/tests/display.c native-game-space/display.c -o $(OUT_DIR)/game-space-display-check
+	@tmp=$$(mktemp -d) && trap 'rm -rf "$$tmp"' EXIT && \
+	  mkdir -p "$$tmp/notproton/launchers/240" && \
+	  printf '%s\n' 3841x2161 > "$$tmp/notproton/launchers/240/.native-game-space" && \
+	  $(OUT_DIR)/game-space-display-check "$$tmp"
+	@sh -n dylib/feats/compat_run.sh
+
+$(NATIVE_SPACE): $(NATIVE_SPACE_SRC) native-game-space/config.h native-game-space/display.h native-game-space/input.h dylib/core/macho.h
+	@mkdir -p $(OUT_DIR)
+	$(CC) -arch arm64 $(NATIVE_SPACE_FLAGS) -o $(OUT_DIR)/native-game-space.arm64.dylib $(NATIVE_SPACE_SRC)
+	$(CC) -arch x86_64 $(NATIVE_SPACE_FLAGS) -o $(OUT_DIR)/native-game-space.x86_64.dylib $(NATIVE_SPACE_SRC)
+	lipo -create $(OUT_DIR)/native-game-space.arm64.dylib $(OUT_DIR)/native-game-space.x86_64.dylib -output $@
+	codesign --force --sign - $@
+
+native-game-space-install: $(NATIVE_SPACE)
+	$(call install_atomically,$(NATIVE_SPACE),$(SUPPORT_DIR)/native-game-space.dylib)
+
 overlay-shim: $(OVERLAY_SHIM)
 
 $(OVERLAY_SHIM): $(OVERLAY_SHIM_SRC)
@@ -635,7 +665,7 @@ $(APPINFO): helpers/appinfo.swift
 	swiftc -O -target $(ARCH)-apple-macos$(MIN_VER) -o $@ $<
 	@echo "==> Built $@"
 
-helpers-install: $(ICONMAKER) $(APPINFO)
+helpers-install: $(ICONMAKER) $(APPINFO) native-game-space-install
 	$(call install_atomically,$(ICONMAKER),$(SUPPORT_DIR)/iconmaker)
 	$(call install_atomically,$(APPINFO),$(SUPPORT_DIR)/appinfo)
 	@echo "==> Installed: $(SUPPORT_DIR)/{iconmaker,appinfo}"
@@ -709,11 +739,12 @@ bridge:
 fonts:
 	fonts/build.sh
 
-app-payload: $(TARGET) $(OVERLAY_SHIM) $(ICONMAKER) $(APPINFO)
+app-payload: $(TARGET) $(OVERLAY_SHIM) $(NATIVE_SPACE) $(ICONMAKER) $(APPINFO)
 	@mkdir -p "$(APP_PAYLOAD)/signatures/macos.arm64"
 	@mkdir -p "$(APP_PAYLOAD)/bridge"
 	cp -f $(TARGET) "$(APP_PAYLOAD)/notproton.dylib"
 	cp -f $(OVERLAY_SHIM) "$(APP_PAYLOAD)/overlay-shim.dylib"
+	cp -f $(NATIVE_SPACE) "$(APP_PAYLOAD)/native-game-space.dylib"
 	cp -f $(ICONMAKER) "$(APP_PAYLOAD)/iconmaker"
 	cp -f $(APPINFO) "$(APP_PAYLOAD)/appinfo"
 	cp -f dylib/feats/compat_run.sh "$(APP_PAYLOAD)/run"

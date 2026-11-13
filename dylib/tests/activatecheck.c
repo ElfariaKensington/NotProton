@@ -56,6 +56,14 @@ static void menu_bar_owner(id workspace, id owner, int pid) {
 }
 
 int main(void) {
+    check(np_is_game_launcher("/np/240/runner/wine.app/Contents/MacOS/wine", "/np/"),
+          "per-game runner can receive launch focus");
+    check(np_is_game_launcher("/np/240/Game.app/Contents/MacOS/wine", "/np/"),
+          "standalone game launcher can receive launch focus");
+    check(!np_is_game_launcher("/np/240evil/wine.app/Contents/MacOS/wine", "/np/") &&
+          !np_is_game_launcher("/other/240/wine.app/Contents/MacOS/wine", "/np/") &&
+          !np_is_game_launcher("/np/240/runner/wine", "/np/"),
+          "reject other executables");
     Class delegate_cls = make_class("VGUIApplicationDelegate", "applicationDidBecomeActive:",
                                     (IMP)fake_did_become_active, "v@:@");
     Class app_cls = make_class("FakeRunningApplication", "processIdentifier",
