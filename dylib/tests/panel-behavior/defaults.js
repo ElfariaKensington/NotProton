@@ -218,6 +218,14 @@ async function buildCases(form) {
   t.ok(row(game('notproton-26.1-fex'), 'MSync').props.checked === false &&
        row(game('notproton-fex'), 'MSync').props.checked === true,
        'a FEX build\'s set beats the FEX defaults only for that build');
+  {
+    const ga = panel(emit, form, g, { fexTools: FEX_TOOLS.concat('notproton-26.1-fex', 'arc-fex'),
+                                      tools: ['notproton-26.1', 'arc=26.1', 'arc-fex=26.1'] }).render;
+    const adapter = tool => walk(ga({ details: details('%command%', { strCompatToolName: tool }) }));
+    t.ok(row(adapter('arc'), 'MSync').props.checked === true &&
+         row(adapter('arc-fex'), 'MSync').props.checked === false,
+         'a tool that runs one of our builds shows that build\'s set for its runner');
+  }
 
   version().props.onChange({ data: 'notproton-25.0' });
   t.ok(row(h.render(page), 'High Resolution').props.checked === true,
@@ -310,7 +318,8 @@ for (const form of Object.keys(FORMS)) {
   t.ok(row(r, 'Metal HUD').props.checked === true, 'an unset row shows the default');
   t.ok(row(r, AVX).props.checked === false, 'the AVX2 default of 0 shows off');
   t.ok(dropdowns(r)[1].props.selectedOption === '1.5', 'an unset upscaler shows the default factor');
-  t.ok(!r.some(x => x.type === 'Button' || x.type === 'button'), 'a game has no Reset to defaults');
+  t.ok(!r.some(x => (x.type === 'Button' || x.type === 'button') && x.props.children === 'Reset to defaults'),
+       'a game has no Reset to defaults');
 
   r = nodes('MTL_HUD_ENABLED=0 CX_GRAPHICS_BACKEND=auto %command%');
   t.ok(row(r, 'Metal HUD').props.checked === false, "the game's 0 wins over the default");
@@ -410,6 +419,7 @@ for (const form of Object.keys(FORMS)) {
          'Rosetta shows its saved defaults');
     t.ok(!p.some(x => x.props && x.type === 'Button' && x.props.children === 'Reset to defaults'),
          'the page has no Reset to defaults');
+    t.ok(!p.some(x => x.type === 'Section' && x.props.label === 'Launch Executable'), 'the page has no Launch Executable section');
 
     const runnerLines = i => sent[i].text.split('\n').sort().join(';');
     row(p, 'MSync').props.onChange(true);

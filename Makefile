@@ -51,6 +51,7 @@ SRCS := \
 	dylib/feats/compatpage.c \
 	dylib/feats/prefixstate.c \
 	dylib/feats/usershortcuts.c \
+	dylib/feats/conf.c \
 	dylib/feats/webpatch.c \
 	dylib/feats/nativeplatform.c \
 	dylib/feats/input_access.c \
@@ -73,7 +74,7 @@ DEPS := $(OBJS:.o=.d)
 
 .PHONY: all clean rebuild dobby deploy dylib dylib-install sigcheck fonts fonts-install app-payload app app-zip \
         anchorcheck callscheck sigdb-fixtures webpatch-fixtures peicon-fixtures ceg-check panel-behavior app-tests \
-        featcheck featstagecheck gameenv-check \
+        featcheck featstagecheck runnervariantcheck conf-fixtures confcheck gameenv-check \
         tests-list overlay-shim overlay-shim-install overlay-shim-tests \
         overlay-shim-bench iconmaker icon \
         appinfo helpers-install ntdll-resolve bridge runcheck compatcheck envpasscheck \
@@ -141,6 +142,11 @@ featstagecheck:
 	@if [ ! -f dylib/tests/featstagecheck.sh ]; then \
 		$(call SKIP,featstagecheck,dylib/tests/featstagecheck.sh); exit 0; fi; \
 	sh dylib/tests/featstagecheck.sh dylib/feats/compat_run.sh
+
+runnervariantcheck:
+	@if [ ! -f dylib/tests/runnervariantcheck.sh ]; then \
+		$(call SKIP,runnervariantcheck,dylib/tests/runnervariantcheck.sh); exit 0; fi; \
+	sh dylib/tests/runnervariantcheck.sh dylib/feats/compat_run.sh
 
 gamedrivecheck:
 	@if [ ! -f dylib/tests/gamedrivecheck.sh ]; then $(call SKIP,gamedrivecheck,dylib/tests/gamedrivecheck.sh); exit 0; fi; \
@@ -236,7 +242,8 @@ shortcutcheck: $(OUT_DIR)/iconmaker
 	$(SHORTCUT_BUNDLE_CHECK) && \
 	$(TEST_CC) -o $(SHORTCUTCHECK) dylib/tests/shortcutcheck.c && \
 	$(SHORTCUTCHECK) && \
-	python3 dylib/tests/shortcut-launch.py $(OUT_DIR)/iconmaker
+	python3 dylib/tests/shortcut-launch.py $(OUT_DIR)/iconmaker && \
+	python3 dylib/tests/iconcheck.py $(OUT_DIR)/iconmaker
 
 sigcheck:
 	@if [ ! -f dylib/tests/sigcheck.py ]; then $(call SKIP,sigcheck,dylib/tests/sigcheck.py); exit 0; fi; \
@@ -271,6 +278,33 @@ $(CALLSCHECK): $(CALLSCHECK_SRCS)
 callscheck:
 	@if [ ! -f dylib/tests/callscheck.c ]; then $(call SKIP,callscheck,dylib/tests/callscheck.c); exit 0; fi; \
 	$(MAKE) -s $(CALLSCHECK) && $(CALLSCHECK)
+
+CONF_FIXTURES := dylib/tests/conf-fixtures
+CONFDUMP      := $(OUT_DIR)/confdump
+
+$(CONFDUMP): dylib/tests/confdump.c dylib/feats/conf.c dylib/feats/conf.h
+	@mkdir -p $(dir $@)
+	$(TEST_CC) -O1 -o $@ dylib/tests/confdump.c dylib/feats/conf.c
+
+# One corpus, both readers: webpatch.c through confdump, compat_run.sh through its own
+# normaliser. A difference between them is a difference between the panel and the launch.
+conf-fixtures:
+	@if [ ! -d $(CONF_FIXTURES) ] || [ ! -f dylib/tests/confdump.c ]; then \
+		$(call SKIP,conf-fixtures,$(CONF_FIXTURES)); exit 0; fi; \
+	$(MAKE) -s $(CONFDUMP) || exit 1; \
+	tmp=$$(mktemp -d); \
+	grep -v '^\#' $(CONF_FIXTURES)/EXPECTED | grep -v '^$$' > $$tmp/want; \
+	$(CONFDUMP) $(CONF_FIXTURES) > $$tmp/got || { rm -rf $$tmp; exit 1; }; \
+	if ! diff -u $$tmp/want $$tmp/got > $$tmp/diff; then \
+		echo "FAIL: webpatch.c's reader does not read the corpus as EXPECTED says"; \
+		head -40 $$tmp/diff; rm -rf $$tmp; exit 1; fi; \
+	n=$$(grep -c . $$tmp/got); rm -rf $$tmp; \
+	echo "==> conf fixtures: $$n normalised lines match EXPECTED"
+
+confcheck:
+	@if [ ! -f dylib/tests/confcheck.sh ]; then \
+		$(call SKIP,confcheck,dylib/tests/confcheck.sh); exit 0; fi; \
+	sh dylib/tests/confcheck.sh dylib/feats/compat_run.sh $(CONF_FIXTURES)
 
 SIGDB_FIXTURES := dylib/tests/sigdb-fixtures
 
@@ -331,9 +365,10 @@ GATECHECK         := $(OUT_DIR)/gatecheck
 FEATCHECK         := $(OUT_DIR)/featcheck
 WEBPATCH_FIXTURES := dylib/tests/webpatch-fixtures
 
-$(GATECHECK): dylib/tests/gatecheck.c dylib/feats/webpatch.c dylib/feats/webpatch.h
+$(GATECHECK): dylib/tests/gatecheck.c dylib/feats/webpatch.c dylib/feats/webpatch.h \
+              dylib/feats/conf.c dylib/feats/conf.h dylib/util/file.c
 	@mkdir -p $(dir $@)
-	$(TEST_CC) -O1 -o $@ dylib/tests/gatecheck.c
+	$(TEST_CC) -O1 -o $@ dylib/tests/gatecheck.c dylib/feats/conf.c dylib/util/file.c
 
 NATIVEPLATFORMCHECK := $(OUT_DIR)/nativeplatformcheck
 
@@ -341,9 +376,11 @@ $(NATIVEPLATFORMCHECK): dylib/tests/nativeplatformcheck.c dylib/feats/nativeplat
 	@mkdir -p $(dir $@)
 	$(TEST_CC) -O1 -DHELPER_TIMEOUT_MS=1000 -o $@ dylib/tests/nativeplatformcheck.c dylib/feats/nativeplatform.c dylib/util/file.c
 
-$(FEATCHECK): dylib/tests/featcheck.c dylib/feats/webpatch.c dylib/feats/webpatch.h
+$(FEATCHECK): dylib/tests/featcheck.c dylib/feats/webpatch.c dylib/feats/webpatch.h \
+              dylib/feats/conf.c dylib/feats/conf.h \
+              dylib/util/file.c
 	@mkdir -p $(dir $@)
-	$(TEST_CC) -O1 -o $@ dylib/tests/featcheck.c
+	$(TEST_CC) -O1 -o $@ dylib/tests/featcheck.c dylib/feats/conf.c dylib/util/file.c
 
 featcheck:
 	@if [ ! -f dylib/tests/featcheck.c ]; then \
@@ -433,8 +470,23 @@ spawn-live: $(TARGET)
 		if [ "$$got" != "$$want" ]; then \
 			echo "$$drv $$arg -> $$kid: insert present $$got, wanted $$want"; fail=1; fi; \
 	done; \
+	printf 'int np_overlay;\n' | $(CC) -arch $(ARCH) -mmacosx-version-min=$(MIN_VER) \
+	  -dynamiclib -x c -o $$tmp/overlay.dylib - || exit 1; \
+	out=$$(DYLD_INSERT_LIBRARIES=$$PWD/$(TARGET) SPAWN_INSERT="$$PWD/$(TARGET):$$tmp/overlay.dylib" \
+	       "$$tmp/steam_osx" "$$tmp/child" 2>/dev/null); \
+	np=$$(printf '%s\n' "$$out" | grep -c "/notproton.dylib$$"); \
+	ov=$$(printf '%s\n' "$$out" | grep -c "/overlay.dylib$$"); \
+	if [ "$$np:$$ov" != "0:1" ]; then \
+		echo "steam_osx -> native game: insert present $$np, overlay present $$ov, wanted 0 and 1"; fail=1; fi; \
+	out=$$(DYLD_INSERT_LIBRARIES=$$PWD/$(TARGET) SPAWN_INSERT="$$PWD/$(TARGET):$$tmp/overlay.dylib" \
+	       STEAM_COMPAT_DATA_PATH=$$tmp "$$tmp/steam_osx" "$$tmp/child" 2>/dev/null); \
+	ran=$$(printf '%s\n' "$$out" | grep -c "/child$$"); \
+	np=$$(printf '%s\n' "$$out" | grep -c "/notproton.dylib$$"); \
+	ov=$$(printf '%s\n' "$$out" | grep -c "/overlay.dylib$$"); \
+	if [ "$$ran:$$np:$$ov" != "1:0:0" ]; then \
+		echo "steam_osx -> compat launch: child ran $$ran, insert present $$np, overlay present $$ov, wanted 1, 0 and 0"; fail=1; fi; \
 	if [ $$fail -ne 0 ]; then exit 1; fi; \
-	echo "==> spawn live: the hook lands, steam_osx and Steam Helper keep the insert, other children do not"
+	echo "==> spawn live: the hook lands, steam_osx and Steam Helper keep the insert, native games keep the overlay"
 
 APP_TESTS := app/Tests
 
@@ -450,7 +502,7 @@ panel-behavior:
 		echo "==> panel-behavior: node not found, skipped"; exit 0; fi; \
 	mkdir -p $(OUT_DIR) && \
 	$(TEST_CC) -O1 -o $(OUT_DIR)/panel-emit \
-	  $(PANEL_TESTS)/emit.c && \
+	  $(PANEL_TESTS)/emit.c dylib/feats/conf.c dylib/util/file.c && \
 	node $(PANEL_TESTS)/behavior.js $(OUT_DIR)/panel-emit && \
 	node $(PANEL_TESTS)/environment.js $(OUT_DIR)/panel-emit && \
 	node $(PANEL_TESTS)/switching.js $(OUT_DIR)/panel-emit && \
@@ -537,7 +589,7 @@ overlay-shim-tests: $(OVERLAY_SHIM)
 		$(call SKIP,overlay-shim-tests,$(OVERLAY_SHIM_TESTS)); exit 0; fi; \
 	mkdir -p $(OUT_DIR); \
 	fail=0; ran=0; skipped=0; \
-	for t in device bridge delivery ownership; do \
+	for t in device bridge delivery ownership input; do \
 		for a in arm64 x86_64; do \
 			$(CC) -arch $$a $(OVERLAY_SHIM_TEST_FLAGS) -o $(OUT_DIR)/$$t.$$a \
 				$(OVERLAY_SHIM_TESTS)/$$t.m || exit 1; \
