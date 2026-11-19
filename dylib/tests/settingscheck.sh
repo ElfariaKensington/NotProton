@@ -12,6 +12,7 @@ helpers=""
 for helper in controller_ids ids_without hidraw_lines write_owned_controllers plan_hidden_controllers \
 	plan_disable_hidraw winebus_lines plan_logpixels video_lines prefix_up_to_date \
 	settings_already_applied; do
+
 	part=$(sed -n "/^$helper() {\$/,/^}\$/p" "$SRC")
 	[ -n "$part" ] || { echo "FAIL: $helper not found in $SRC"; exit 1; }
 	helpers="$helpers
