@@ -81,7 +81,8 @@ run_in() {
 		WINESERVER="$work/wineserver" STEAM_COMPAT_DATA_PATH="$case_dir" \
 		SDL_GAMECONTROLLER_IGNORE_DEVICES="${IGNORE-}" \
 		SDL_GAMECONTROLLER_IGNORE_DEVICES_EXCEPT="${EXCEPT-}" \
-		NOTPROTON_RAW_CONTROLLERS="${RAW-}" NOTPROTON_DISABLE_HIDRAW="${HIDRAW-}" verb="${VERB-waitforexitandrun}" \
+		NOTPROTON_RAW_CONTROLLERS="${RAW-}" NOTPROTON_DISABLE_HIDRAW="${HIDRAW-}" \
+		NOTPROTON_RETINA_DPI="${DPI-}" verb="${VERB-waitforexitandrun}" \
 		FAKE_STATUS="$2" FAKE_CALLS="$case_dir/calls" FAKE_IMPORTED="$case_dir/imported" \
 		log="$case_dir/log" body="$body" \
 		sh -ec 'eval "$body"; import_prefix_settings; echo returned' \
@@ -229,6 +230,11 @@ again "" 0
 { cat "$work/retina-off"; winebus '"DisableHidraw"=dword:00000001'; } > "$work/expected"
 same_file "on" "$work/expected" "$case_dir/imported"
 printf '%s\n' '[System\\ControlSet001\\Services\\winebus] 1791230000' '"DisableHidraw"=dword:00000001' '' >> "$case_dir/pfx/system.reg"
+HIDRAW='' VERB=run
+again "" 0
+is "a helper leaves Disable hidraw alone" "" "$(grep -c DisableHidraw "$case_dir/imported" | grep -v '^0$' || true)"
+is "a helper keeps the marker" "yes" "$(test -f "$case_dir/notproton-disable-hidraw" && echo yes)"
+unset VERB
 HIDRAW=''
 again "" 0
 { cat "$work/retina-off"; winebus '"DisableHidraw"=-'; } > "$work/expected"
@@ -261,6 +267,15 @@ VERB=run
 again "" 0
 same_file "a helper leaves them alone" "$work/helper" "$case_dir/imported"
 unset VERB
+DPI=0
+user_reg '"RetinaMode"=-' '"LogPixels"=dword:00000060'
+again 1 0
+same_file "on with NOTPROTON_RETINA_DPI=0 keeps 96" "$work/retina-on" "$case_dir/imported"
+is "nothing is logged" "" "$(grep video "$case_dir/log")"
+user_reg '"RetinaMode"="y"' '"LogPixels"=dword:000000c0'
+again 0 0
+same_file "off with NOTPROTON_RETINA_DPI=0 keeps 192" "$work/retina-off" "$case_dir/imported"
+unset DPI
 
 echo "== settings already in the prefix"
 mkdir -p "$work/cx/share/wine"
