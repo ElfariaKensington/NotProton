@@ -808,6 +808,14 @@ static NTSTATUS steamclient_init( Params *params, bool wow64 )
     if (steamclient) return 0;
 
 #ifdef __APPLE__
+    /* Hardened Wine loaders drop DYLD_INSERT_LIBRARIES. */
+    if (getenv( "NOTPROTON_NATIVE_SIZE" ))
+    {
+        const char *space = getenv( "NOTPROTON_NATIVE_SPACE_LIBRARY" );
+        if (space && *space && !dlopen( space, RTLD_NOW | RTLD_GLOBAL ))
+            WARN( "unable to load native game Space %s: %s\n", debugstr_a(space), dlerror() );
+    }
+
     /* Get the overlay ready */
     load_overlay_libraries();
 

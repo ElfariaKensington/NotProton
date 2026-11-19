@@ -8,6 +8,7 @@ enum InstallPayload {
     struct Located: Sendable {
         let dylib: URL
         let overlayShim: URL
+        var nativeGameSpace: URL { dylib.deletingLastPathComponent().appending(path: "native-game-space.dylib") }
         let iconmaker: URL
         let appinfo: URL
         let run: URL
@@ -49,6 +50,9 @@ enum InstallPayload {
         }
         if !files.fileExists(atPath: shim.path(percentEncoded: false)) {
             missing.append("overlay-shim.dylib")
+        }
+        if !files.fileExists(atPath: root.appending(path: "native-game-space.dylib").path(percentEncoded: false)) {
+            missing.append("native-game-space.dylib")
         }
         if !files.fileExists(atPath: iconmaker.path(percentEncoded: false)) {
             missing.append("iconmaker")
