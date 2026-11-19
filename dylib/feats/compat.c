@@ -183,6 +183,11 @@ int np_compat_probe_tool_layout(uintptr_t appid_gate, uintptr_t oslist_gate) {
 
     int32_t by_appid   = (int32_t)appid_off   - COMPAT_TOOL_APPID_OFF;
     int32_t by_install = (int32_t)install_off - COMPAT_TOOL_INSTALL_OFF;
+    if (by_appid < 0) {
+        NP_ERR("np_compat_probe_tool_layout: the tool fields moved %+d, which no inserted "
+               "field explains", by_appid);
+        return 0;
+    }
     if (by_appid != by_install) {
         NP_ERR("np_compat_probe_tool_layout: appid moved %+d but install moved %+d; "
                "the tool layout no longer shifts as one block",
@@ -350,6 +355,11 @@ static int g_tool_count;
 static int g_tool_cap;
 static int g_tool_list_present;
 
+#define ADOPTED_MAX 32
+
+static tool_entry_t g_adopted[ADOPTED_MAX];
+static int g_adopted_count;
+
 static int is_name_char(char c, const char *extra) {
     if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9'))
         return 1;
@@ -401,6 +411,7 @@ static int parse_tool_line(char *line, tool_entry_t *out) {
 int np_compat_load_tool_list(const char *path, const char *tools_dir) {
     g_tool_count = 0;
     g_tool_list_present = 0;
+    g_adopted_count = 0;
 
     FILE *f = fopen(path, "r");
     if (!f) {
@@ -451,6 +462,78 @@ int np_compat_load_tool_list(const char *path, const char *tools_dir) {
     return g_tool_count;
 }
 
+static int listed_tool(const char *name) {
+    for (int i = 0; i < g_tool_count; i++)
+        if (strcmp(g_tools[i].name, name) == 0) return 1;
+    return 0;
+}
+
+static const char *runner_flavor(const char *build) {
+    const char *flavor = NULL;
+    for (int i = 0; i < g_tool_count; i++) {
+        if (strcmp(g_tools[i].build, build) != 0) continue;
+        if (strcmp(g_tools[i].flavor, "fex") == 0) return "fex";
+        flavor = "rosetta";
+    }
+    return flavor;
+}
+
+static int read_word(const char *dir, const char *file, char *out, size_t size) {
+    char path[704];
+    snprintf(path, sizeof(path), "%s/%s", dir, file);
+    FILE *f = fopen(path, "r");
+    if (!f) return 0;
+    char line[128];
+    int got = fgets(line, sizeof(line), f) != NULL;
+    fclose(f);
+    if (!got) return 0;
+    char *s = line + strspn(line, " \t");
+    char *nl = strchr(s, '\n');
+    if (!nl) return 0;
+    size_t n = (size_t)(nl - s);
+    while (n && (s[n - 1] == ' ' || s[n - 1] == '\t')) n--;
+    if (!n || n >= size) return 0;
+    memcpy(out, s, n);
+    out[n] = '\0';
+    return 1;
+}
+
+int np_compat_adopt_tools(const char *tools_dir) {
+    g_adopted_count = 0;
+    DIR *d = opendir(tools_dir);
+    if (!d) return 0;
+    struct dirent *e;
+    while ((e = readdir(d)) && g_adopted_count < ADOPTED_MAX) {
+        const char *name = e->d_name;
+        if (name[0] == '.' || !is_token(name, "._-") || strlen(name) >= sizeof(g_adopted[0].name)
+            || listed_tool(name))
+            continue;
+
+        tool_entry_t t;
+        memset(&t, 0, sizeof(t));
+        snprintf(t.name, sizeof(t.name), "%s", name);
+        snprintf(t.dir, sizeof(t.dir), "%s/%s", tools_dir, name);
+
+        char vdf[704];
+        snprintf(vdf, sizeof(vdf), "%s/compatibilitytool.vdf", t.dir);
+        if (access(vdf, R_OK) != 0) continue;
+        if (!read_word(t.dir, "build", t.build, sizeof(t.build)) || !np_is_build_id(t.build))
+            continue;
+        const char *runner = runner_flavor(t.build);
+        if (!runner) continue;
+
+        char flavor[sizeof(t.flavor)] = "";
+        read_word(t.dir, "flavor", flavor, sizeof(flavor));
+        snprintf(t.flavor, sizeof(t.flavor), "%s",
+                 strcmp(flavor, "fex") == 0 || strcmp(flavor, "rosetta") == 0 ? flavor : runner);
+
+        g_adopted[g_adopted_count++] = t;
+        NP_LOG("np_compat_adopt_tools: %s runs build %s (%s)", t.name, t.build, t.flavor);
+    }
+    closedir(d);
+    return g_adopted_count;
+}
+
 static int tools_dir_path(char *out, size_t size) {
     const char *home = np_home_dir();
     if (!home) return -1;
@@ -466,6 +549,7 @@ static void load_tool_list(void) {
     char path[512];
     snprintf(path, sizeof(path), "%s/Library/Application Support/notproton/tools", home);
     np_compat_load_tool_list(path, tools_dir);
+    np_compat_adopt_tools(tools_dir);
 }
 
 static void load_tool_list_once(void) {
@@ -627,17 +711,28 @@ const char *np_compat_tool_dir(void) {
     return g_tool_dir[0] ? g_tool_dir : NULL;
 }
 
+static int adopted(const char *name, size_t n) {
+    for (int i = 0; i < g_adopted_count; i++)
+        if (strlen(g_adopted[i].name) == n && memcmp(g_adopted[i].name, name, n) == 0) return 1;
+    return 0;
+}
+
 int np_compat_runs_tool(const char *cmd) {
-    static const char lead[]    = "/compatibilitytools.d/" TOOL_DIR_NAME;
+    static const char lead[]    = "/compatibilitytools.d/";
     static const char run[]     = "'" TOOL_RUN " ";
     static const char run_dot[] = "/.'" TOOL_RUN " ";
     if (!cmd) return 0;
 
     for (const char *at = strstr(cmd, lead); at; at = strstr(at + 1, lead)) {
-        const char *p = at + sizeof(lead) - 1;
+        const char *name = at + sizeof(lead) - 1;
+        const char *p = name;
         while (is_name_char(*p, "._-"))
             p++;
-        if (strncmp(p, run, sizeof(run) - 1) == 0 || strncmp(p, run_dot, sizeof(run_dot) - 1) == 0)
+        if (strncmp(p, run, sizeof(run) - 1) != 0 && strncmp(p, run_dot, sizeof(run_dot) - 1) != 0)
+            continue;
+        size_t n = (size_t)(p - name);
+        if ((n >= strlen(TOOL_DIR_NAME) && strncmp(name, TOOL_DIR_NAME, strlen(TOOL_DIR_NAME)) == 0)
+            || adopted(name, n))
             return 1;
     }
     return 0;
@@ -855,7 +950,8 @@ void np_compat_register_crossover(void *compat_mgr) {
     // the registration gate, from_oslist=windows intersects the app mask so the
     // dropdown keeps it, and appid 0 marks a manager-local tool the resolver routes
     // to the local run script.
-    uint8_t (*buffers)[COMPAT_TOOL_STRIDE + 64] = calloc((size_t)g_tool_count, sizeof(*buffers));
+    size_t entry = np_compat_tool_stride() + 64;
+    uint8_t *buffers = calloc((size_t)g_tool_count, entry);
     if (g_tool_count && !buffers) {
         NP_WARN("np_compat_register_crossover: out of memory, no tool registered");
         return;
@@ -872,8 +968,8 @@ void np_compat_register_crossover(void *compat_mgr) {
             continue;
         }
 
-        uint8_t *tool = buffers[i];
-        memset(tool, 0, sizeof(buffers[i]));
+        uint8_t *tool = buffers + (size_t)i * entry;
+        memset(tool, 0, entry);
         *(uint32_t *)(tool + COMPAT_TOOL_FLAGS_OFF)      = COMPAT_TOOL_FLAG_NO_APP;
         *(const char **)(tool + COMPAT_TOOL_NAME_OFF)    = t->name;
         *(const char **)(tool + COMPAT_TOOL_DISPLAY_OFF) = t->display;
@@ -902,11 +998,12 @@ size_t np_compat_tool_builds(const char **names, const char **builds, const char
                              size_t max) {
     load_tool_list_once();
     size_t n = 0;
-    for (int i = 0; i < g_tool_count && n < max; i++) {
-        if (!*g_tools[i].build) continue;
-        names[n] = g_tools[i].name;
-        builds[n] = g_tools[i].build;
-        archs[n] = strcmp(g_tools[i].flavor, "fex") == 0 ? "aarch64" : "x86_64";
+    for (int i = 0; i < g_tool_count + g_adopted_count && n < max; i++) {
+        const tool_entry_t *t = i < g_tool_count ? &g_tools[i] : &g_adopted[i - g_tool_count];
+        if (!*t->build) continue;
+        names[n] = t->name;
+        builds[n] = t->build;
+        archs[n] = strcmp(t->flavor, "fex") == 0 ? "aarch64" : "x86_64";
         n++;
     }
     return n;
@@ -915,16 +1012,17 @@ size_t np_compat_tool_builds(const char **names, const char **builds, const char
 size_t np_compat_fex_tools(const char **names, size_t max) {
     load_tool_list_once();
     size_t n = 0;
-    for (int i = 0; i < g_tool_count; i++) {
-        if (strcmp(g_tools[i].flavor, "fex") != 0) continue;
+    for (int i = 0; i < g_tool_count + g_adopted_count; i++) {
+        const tool_entry_t *t = i < g_tool_count ? &g_tools[i] : &g_adopted[i - g_tool_count];
+        if (strcmp(t->flavor, "fex") != 0) continue;
         if (n == max) {
             static atomic_flag warned = ATOMIC_FLAG_INIT;
             if (!atomic_flag_test_and_set(&warned))
                 NP_WARN("np_compat_fex_tools: more than %zu FEX tools, %s and later "
-                        "are left out", max, g_tools[i].name);
+                        "are left out", max, t->name);
             break;
         }
-        names[n++] = g_tools[i].name;
+        names[n++] = t->name;
     }
     return n;
 }

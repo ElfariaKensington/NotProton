@@ -172,6 +172,7 @@ enum SteamInstaller {
                 try adHocSign(app)
             } catch {
                 revertPlist(priorPlist, at: plist, app: app)
+                if cdhash(of: app) != priorHash { resetInputAccess() }
                 throw error
             }
             if cdhash(of: app) != priorHash {
@@ -181,6 +182,7 @@ enum SteamInstaller {
 
         report(.registering)
         register(app)
+        GameTiles.refresh(launchers: support.appending(path: "launchers"), run: payload.run)
 
         let landed = SteamBundle.currentInsert(at: plist)
         guard landed == dylib.path(percentEncoded: false) else {
@@ -203,6 +205,7 @@ enum SteamInstaller {
                 AppLog.note("install: could not record the rebuild app: \(error.localizedDescription)")
             }
         }
+        AppLog.note("install: \(dylib.path(percentEncoded: false)) uuid \(MachOBuild.identity(of: dylib)?.joined(separator: ",") ?? "unreadable")")
         report(.finished)
         return InstallOutcome(
             stoppedClient: stopped,
@@ -278,7 +281,8 @@ enum SteamInstaller {
         let deployed = SteamBundle.currentInsert(at: plist) == dylib.path(percentEncoded: false)
             && SteamBundle.currentControllerBlock(at: plist) == SteamBundle.controllerBlockValue
         let file = DeploymentContent.File(source: shipping, destination: dylib, name: "notproton.dylib", allowsResigning: true)
-        if deployed, try file.matches() {
+        let sealed = deployed && (try? Shell.run("/usr/bin/codesign", ["--verify", app.path(percentEncoded: false)]))?.succeeded == true
+        if deployed, sealed, try file.matches() {
             AppLog.note("install: Steam already carries this dylib, installing for this account only")
             return false
         }

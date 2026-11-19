@@ -266,7 +266,7 @@ anchorcheck:
 CALLSCHECK := $(OUT_DIR)/callscheck
 CALLSCHECK_SRCS := dylib/tests/callscheck.c $(filter-out dylib/tests/anchorcheck.c,$(ANCHORCHECK_SRCS))
 
-$(CALLSCHECK): $(CALLSCHECK_SRCS)
+$(CALLSCHECK): $(CALLSCHECK_SRCS) FORCE
 	@mkdir -p $(dir $@)
 	$(CC) -arch $(ARCH) -mmacosx-version-min=$(MIN_VER) -std=c17 -g -O1 \
 	  -Wall -Wextra -Wno-unused-parameter -Idylib -Ivendor \
@@ -363,18 +363,18 @@ GATECHECK         := $(OUT_DIR)/gatecheck
 FEATCHECK         := $(OUT_DIR)/featcheck
 WEBPATCH_FIXTURES := dylib/tests/webpatch-fixtures
 
-$(GATECHECK): dylib/tests/gatecheck.c dylib/feats/webpatch.c dylib/feats/webpatch.h \
+$(GATECHECK): FORCE dylib/tests/gatecheck.c dylib/feats/webpatch.c dylib/feats/webpatch.h \
               dylib/feats/conf.c dylib/feats/conf.h dylib/util/file.c
 	@mkdir -p $(dir $@)
 	$(TEST_CC) -O1 -o $@ dylib/tests/gatecheck.c dylib/feats/conf.c dylib/util/file.c
 
 NATIVEPLATFORMCHECK := $(OUT_DIR)/nativeplatformcheck
 
-$(NATIVEPLATFORMCHECK): dylib/tests/nativeplatformcheck.c dylib/feats/nativeplatform.c dylib/feats/nativeplatform.h dylib/util/file.c
+$(NATIVEPLATFORMCHECK): FORCE dylib/tests/nativeplatformcheck.c dylib/feats/nativeplatform.c dylib/feats/nativeplatform.h dylib/util/file.c
 	@mkdir -p $(dir $@)
 	$(TEST_CC) -O1 -DHELPER_TIMEOUT_MS=1000 -o $@ dylib/tests/nativeplatformcheck.c dylib/feats/nativeplatform.c dylib/util/file.c
 
-$(FEATCHECK): dylib/tests/featcheck.c dylib/feats/webpatch.c dylib/feats/webpatch.h \
+$(FEATCHECK): FORCE dylib/tests/featcheck.c dylib/feats/webpatch.c dylib/feats/webpatch.h \
               dylib/feats/conf.c dylib/feats/conf.h \
               dylib/util/file.c
 	@mkdir -p $(dir $@)
@@ -413,6 +413,7 @@ webpatch-fixtures:
 	if [ $$fail -eq 0 ]; then \
 		if command -v node >/dev/null 2>&1; then \
 			node dylib/tests/library-filter/behavior.js $$tmp/library.*.out.js || fail=1; \
+		elif [ -n "$$CI" ]; then echo "FAIL: library filter needs node in CI"; fail=1; \
 		else echo "==> library filter: node not found, skipped"; fi; \
 	fi; \
 	rm -rf $$tmp; \
@@ -468,20 +469,36 @@ spawn-live: $(TARGET)
 		if [ "$$got" != "$$want" ]; then \
 			echo "$$drv $$arg -> $$kid: insert present $$got, wanted $$want"; fail=1; fi; \
 	done; \
+	printf 'int np_overlay;\n' | $(CC) -arch $(ARCH) -mmacosx-version-min=$(MIN_VER) \
+	  -dynamiclib -x c -o $$tmp/overlay.dylib - || exit 1; \
+	out=$$(DYLD_INSERT_LIBRARIES=$$PWD/$(TARGET) SPAWN_INSERT="$$PWD/$(TARGET):$$tmp/overlay.dylib" \
+	       "$$tmp/steam_osx" "$$tmp/child" 2>/dev/null); \
+	np=$$(printf '%s\n' "$$out" | grep -c "/notproton.dylib$$"); \
+	ov=$$(printf '%s\n' "$$out" | grep -c "/overlay.dylib$$"); \
+	if [ "$$np:$$ov" != "0:1" ]; then \
+		echo "steam_osx -> native game: insert present $$np, overlay present $$ov, wanted 0 and 1"; fail=1; fi; \
+	out=$$(DYLD_INSERT_LIBRARIES=$$PWD/$(TARGET) SPAWN_INSERT="$$PWD/$(TARGET):$$tmp/overlay.dylib" \
+	       STEAM_COMPAT_DATA_PATH=$$tmp "$$tmp/steam_osx" "$$tmp/child" 2>/dev/null); \
+	ran=$$(printf '%s\n' "$$out" | grep -c "/child$$"); \
+	np=$$(printf '%s\n' "$$out" | grep -c "/notproton.dylib$$"); \
+	ov=$$(printf '%s\n' "$$out" | grep -c "/overlay.dylib$$"); \
+	if [ "$$ran:$$np:$$ov" != "1:0:0" ]; then \
+		echo "steam_osx -> compat launch: child ran $$ran, insert present $$np, overlay present $$ov, wanted 1, 0 and 0"; fail=1; fi; \
 	if [ $$fail -ne 0 ]; then exit 1; fi; \
-	echo "==> spawn live: the hook lands, steam_osx and Steam Helper keep the insert, other children do not"
+	echo "==> spawn live: the hook lands, steam_osx and Steam Helper keep the insert, native games keep the overlay"
 
 APP_TESTS := app/Tests
 
 app-tests:
 	@if [ ! -d $(APP_TESTS) ]; then $(call SKIP,app-tests,$(APP_TESTS)); exit 0; fi; \
-	touch app/Package.swift; cd app && swift test --no-parallel
+	cd app && swift test --manifest-cache none --no-parallel
 
 PANEL_TESTS := dylib/tests/panel-behavior
 
 panel-behavior:
 	@if [ ! -d $(PANEL_TESTS) ]; then $(call SKIP,panel-behavior,$(PANEL_TESTS)); exit 0; fi; \
 	if ! command -v node >/dev/null 2>&1; then \
+		[ -z "$$CI" ] || { echo "FAIL: panel-behavior needs node in CI"; exit 1; }; \
 		echo "==> panel-behavior: node not found, skipped"; exit 0; fi; \
 	mkdir -p $(OUT_DIR) && \
 	$(TEST_CC) -O1 -o $(OUT_DIR)/panel-emit \
@@ -632,7 +649,7 @@ helpers-install: $(ICONMAKER) $(APPINFO)
 
 dobby:
 	@mkdir -p $(DOBBY_DIR)
-	cd $(DOBBY_DIR) && cmake $(CURDIR)/vendor/dobby \
+	cd $(DOBBY_DIR) && cmake "$(CURDIR)/vendor/dobby" \
 		-DCMAKE_OSX_ARCHITECTURES=arm64 \
 		-DCMAKE_OSX_DEPLOYMENT_TARGET=$(MIN_VER) \
 		-DDOBBY_DEBUG=OFF \
