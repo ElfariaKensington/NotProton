@@ -2979,7 +2979,7 @@ fi
 if [ -n "\$NOTPROTON_FEATURE_DYLIBS" ]; then
   export DYLD_INSERT_LIBRARIES="\${DYLD_INSERT_LIBRARIES:+\$DYLD_INSERT_LIBRARIES:}\$NOTPROTON_FEATURE_DYLIBS"
 fi
-cursor_helper="\$(dirname "\$WINELOADER")/game-cursor.dylib"
+cursor_helper="\${WINELOADER%/*}/game-cursor.dylib"
 if [ -f "\$cursor_helper" ]; then
   export DYLD_INSERT_LIBRARIES="\${DYLD_INSERT_LIBRARIES:+\$DYLD_INSERT_LIBRARIES:}\$cursor_helper"
 fi

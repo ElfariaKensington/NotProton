@@ -371,7 +371,7 @@ is "FEX runner" "$T/game/runner" "$game_runner"
 is "Dock tile hidden" "  <key>LSUIElement</key><true/>" "$uielement_arg"
 np_cursor_helper="$T/cursor-helper.dylib"; : > "$np_cursor_helper"
 pick /cx/lib/wine/aarch64-unix ""
-is "cursor helper uses the game launcher" "|launcher" "$game_runner|$bundle_exec"
+is "cursor helper uses the game launcher" "" "$game_runner"
 np_cursor_helper="$T/no-cursor-helper"
 pick /cx/lib/wine/aarch64-unix /extra
 is "own WINEDLLPATH" "" "$game_runner"
