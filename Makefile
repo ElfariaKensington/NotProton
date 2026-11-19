@@ -672,12 +672,25 @@ $(OUT_DIR)/game-session-fixture: dylib/tests/game-session-fixture.m
 game-session-check: game-session $(OUT_DIR)/game-session-fixture
 	python3 dylib/tests/game-session-check.py dylib/feats/compat_run.sh
 
-helpers-install: $(ICONMAKER) $(APPINFO) $(GAME_HOST) $(GAME_CLIENT)
+GAME_CURSOR := $(OUT_DIR)/game-cursor.dylib
+.PHONY: game-cursor cursor-check
+game-cursor: $(GAME_CURSOR)
+$(GAME_CURSOR): helpers/game-cursor.m helpers/game-presentation.h
+	@mkdir -p $(OUT_DIR)
+	$(CC) -arch arm64 -arch x86_64 -mmacosx-version-min=$(MIN_VER) $(AVAIL) \
+		-fobjc-arc -O2 -Wall -Wextra -framework AppKit -framework QuartzCore \
+		-dynamiclib -install_name @rpath/game-cursor.dylib -o $@ $<
+	codesign --force --sign - $@
+cursor-check: game-cursor
+	python3 dylib/tests/cursor-check.py
+
+helpers-install: $(ICONMAKER) $(APPINFO) $(GAME_HOST) $(GAME_CLIENT) $(GAME_CURSOR)
 	$(call install_atomically,$(ICONMAKER),$(SUPPORT_DIR)/iconmaker)
 	$(call install_atomically,$(APPINFO),$(SUPPORT_DIR)/appinfo)
 	$(call install_atomically,$(GAME_HOST),$(SUPPORT_DIR)/bridge/game-host)
 	$(call install_atomically,$(GAME_CLIENT),$(SUPPORT_DIR)/bridge/game-client.dylib)
-	@echo "==> Installed: $(SUPPORT_DIR)/{iconmaker,appinfo,bridge/game-host,bridge/game-client.dylib}"
+	$(call install_atomically,$(GAME_CURSOR),$(SUPPORT_DIR)/bridge/game-cursor.dylib)
+	@echo "==> Installed: $(SUPPORT_DIR)/{iconmaker,appinfo,bridge/game-host,bridge/game-client.dylib,bridge/game-cursor.dylib}"
 
 dobby:
 	@mkdir -p $(DOBBY_DIR)
@@ -748,14 +761,14 @@ bridge:
 fonts:
 	fonts/build.sh
 
-app-payload: $(TARGET) $(OVERLAY_SHIM) $(ICONMAKER) $(APPINFO) $(GAME_HOST) $(GAME_CLIENT)
+app-payload: $(TARGET) $(OVERLAY_SHIM) $(ICONMAKER) $(APPINFO) $(GAME_HOST) $(GAME_CLIENT) $(GAME_CURSOR)
 	@mkdir -p "$(APP_PAYLOAD)/signatures/macos.arm64"
 	@mkdir -p "$(APP_PAYLOAD)/bridge"
 	cp -f $(TARGET) "$(APP_PAYLOAD)/notproton.dylib"
 	cp -f $(OVERLAY_SHIM) "$(APP_PAYLOAD)/overlay-shim.dylib"
 	cp -f $(ICONMAKER) "$(APP_PAYLOAD)/iconmaker"
 	cp -f $(APPINFO) "$(APP_PAYLOAD)/appinfo"
-	cp -f $(GAME_HOST) $(GAME_CLIENT) "$(APP_PAYLOAD)/bridge/"
+	cp -f $(GAME_HOST) $(GAME_CLIENT) $(GAME_CURSOR) "$(APP_PAYLOAD)/bridge/"
 	cp -f dylib/feats/compat_run.sh "$(APP_PAYLOAD)/run"
 	cp -f signatures/macos.arm64/*.json "$(APP_PAYLOAD)/signatures/macos.arm64/"
 	@set -e; for spec in $(BRIDGE_FILES); do \

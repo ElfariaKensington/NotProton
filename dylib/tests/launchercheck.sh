@@ -8,7 +8,7 @@ funcs=$(sed -n '/^bundle_listing() {$/,/^)$/p' "$SRC")
 runner_funcs=$(sed -n '/^runner_stamp() {$/,/^)$/p' "$SRC")
 runner_pick=$(sed -n '/^game_runner=""$/,/^fi$/p' "$SRC")
 shared_funcs=$(sed -n '/^lsregister="\/System/,/^case "\$verb" in$/p' "$SRC" | sed '$d')
-launcher_body=$(sed -n '/^  cat > "\$loader_macos\/launcher" <<LAUNCHER$/,/^LAUNCHER$/p' "$SRC" | sed 1d)
+launcher_body=$(sed -n '/^[[:space:]]*cat > "\$loader_macos\/launcher" <<LAUNCHER$/,/^LAUNCHER$/p' "$SRC" | sed 1d)
 loader_line=$(grep -A1 '^  if \[ -x "\$loader_macos/wine" \]; then$' "$SRC" | sed -n 2p)
 [ -n "$funcs" ] || { echo "FAIL: bundle functions not found"; exit 1; }
 [ -n "$shared_funcs" ] || { echo "FAIL: shared bundle functions not found"; exit 1; }
@@ -373,6 +373,10 @@ np_single_icon=1
 pick /cx/lib/wine/aarch64-unix ""
 is "single-icon host uses its launcher" "" "$game_runner"
 np_single_icon=0
+np_cursor_helper="$T/cursor-helper.dylib"; : > "$np_cursor_helper"
+pick /cx/lib/wine/aarch64-unix ""
+is "cursor helper uses the game launcher" "" "$game_runner"
+np_cursor_helper="$T/no-cursor-helper"
 pick /cx/lib/wine/aarch64-unix /extra
 is "own WINEDLLPATH" "" "$game_runner"
 pick /cx/lib/wine/x86_64-unix ""
