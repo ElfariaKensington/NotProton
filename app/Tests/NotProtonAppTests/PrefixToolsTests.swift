@@ -149,7 +149,8 @@ struct PrefixToolsTests {
 
     @Test("Every tool is offered under the name the loader resolves")
     func toolNamesAreBare() {
-        #expect(WineTool.allCases.map(\.rawValue) == ["winecfg", "regedit", "taskmgr"])
+        #expect(WineTool.allCases.map(\.rawValue) == ["winecfg", "regedit", "taskmgr", "joycpl"])
+        #expect(WineTool.joycpl.arguments(runner: URL(filePath: "/cx")) == ["/cx/lib/wine/x86_64-windows/control.exe", "joy.cpl"])
         for tool in WineTool.allCases {
             #expect(!tool.rawValue.contains("/"), "\(tool) would not resolve as a builtin")
             #expect(!tool.rawValue.hasSuffix(".exe"))
@@ -374,7 +375,7 @@ struct PrefixToolsTests {
 
         #expect(helper.upperBound == gate.lowerBound)
         #expect(gate.upperBound < alert.lowerBound)
-        #expect(source.ranges(of: "osascript").count == 3)
+        #expect(source.ranges(of: "osascript").count == 6)
         let rebuild = try #require(source.range(of: "rebuild_prefix() {"))
         let prompt = try #require(source.range(of: "choice=$(osascript"))
         #expect(source[rebuild.upperBound..<prompt.lowerBound].contains(#"[ "$verb" != run ] || { [ -n "$3" ] && return 0; exit 1; }"#))
@@ -493,6 +494,38 @@ struct PrefixToolsTests {
         try Data("stale".utf8).write(to: support.appending(path: RebuildPrefixCommand.executableRecord))
         try RebuildPrefixCommand.recordExecutable(source, in: support)
         #expect(!FileManager.default.fileExists(atPath: support.appending(path: RebuildPrefixCommand.executableRecord).path))
+    }
+
+    @Test("A moved app replaces a stale record, and a working record is kept")
+    func staleExecutableRecordIsRefreshed() throws {
+        let fm = FileManager.default
+        let dir = fm.temporaryDirectory.appending(path: "np-helper-\(UUID().uuidString)")
+        defer { try? fm.removeItem(at: dir) }
+        let support = dir.appending(path: "support")
+        let record = support.appending(path: RebuildPrefixCommand.executableRecord)
+        let other = dir.appending(path: "Other/NotProton.app/Contents/MacOS/NotProtonApp")
+        let here = dir.appending(path: "Here/NotProton.app/Contents/MacOS/NotProtonApp")
+        for exe in [other, here] {
+            try fm.createDirectory(at: exe.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try Data().write(to: exe)
+            try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: exe.path(percentEncoded: false))
+        }
+        try fm.createDirectory(at: support, withIntermediateDirectories: true)
+
+        RebuildPrefixCommand.refreshExecutableRecord(here, in: support)
+        #expect(!fm.fileExists(atPath: record.path(percentEncoded: false)), "not installed")
+
+        try Data("1.2.6".utf8).write(to: support.appending(path: "dylib.version"))
+        RebuildPrefixCommand.refreshExecutableRecord(here, in: support)
+        #expect(try String(contentsOf: record, encoding: .utf8) == here.path(percentEncoded: false))
+
+        try Data(other.path(percentEncoded: false).utf8).write(to: record)
+        RebuildPrefixCommand.refreshExecutableRecord(here, in: support)
+        #expect(try String(contentsOf: record, encoding: .utf8) == other.path(percentEncoded: false), "still runs")
+
+        try Data(dir.appending(path: "Gone/NotProton.app/Contents/MacOS/NotProtonApp").path(percentEncoded: false).utf8).write(to: record)
+        RebuildPrefixCommand.refreshExecutableRecord(here, in: support)
+        #expect(try String(contentsOf: record, encoding: .utf8) == here.path(percentEncoded: false), "moved")
     }
 
     @Test("A queued installation lock times out without disturbing its holder")

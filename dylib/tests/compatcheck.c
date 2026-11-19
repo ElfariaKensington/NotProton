@@ -176,6 +176,10 @@ static void probe_cases(void) {
     check(np_compat_tool_stride() == COMPAT_TOOL_STRIDE, "an unshifted entry keeps its stride");
 
     g_tool_shift = 0;
+    check(np_compat_probe_tool_layout(build_gate(0x58, 0x50), 0) == 0 && g_tool_shift == 0,
+          "fields that moved down are refused");
+
+    g_tool_shift = 0;
     check(np_compat_probe_tool_layout(build_gate(0x68, 0x60), 0) == 1,
           "a client that grew the entry by 8 probes clean");
     check(np_compat_tool_off(COMPAT_TOOL_APPID_OFF) == 0x68, "appid follows the shift");
@@ -252,7 +256,7 @@ static void enabled_cases(void) {
 
 // A manager holding `count` entries, the one at `named_slot` carrying the tool name.
 static uint8_t manager[0x400];
-static uint8_t entries[(COMPAT_MANAGER_TOOLS_HEADROOM + 64) * (COMPAT_TOOL_STRIDE + 64)];
+static uint8_t entries[(COMPAT_MANAGER_TOOLS_HEADROOM + 64) * (COMPAT_TOOL_STRIDE + 256)];
 
 static void *build_manager(uint32_t count, int named_slot) {
     memset(manager, 0, sizeof manager);
@@ -375,7 +379,7 @@ static void registration_case(int shift, int mode) {
 }
 
 static void registration_cases(void) {
-    const int shifts[] = {0, 8, 64};
+    const int shifts[] = {0, 8, 64, 128};
     for (size_t i = 0; i < sizeof(shifts) / sizeof(*shifts); i++) {
         for (int mode = 0; mode < 7; mode++) {
             fflush(NULL);
@@ -462,6 +466,102 @@ static void tool_list_cases(void) {
 
     check(np_compat_load_tool_list("out/compatcheck-missing", "/tools") == 0
           && !g_tool_list_present, "a missing list keeps no tools and says so");
+}
+
+static void put_file(const char *path, const char *text) {
+    FILE *f = fopen(path, "w");
+    if (!f) return;
+    fputs(text, f);
+    fclose(f);
+}
+
+static void adopted_tool_cases(void) {
+    static const char list[] = "out/compatcheck-adopt-list";
+    static const char root[] = "out/compatcheck-adopt";
+    static const struct { const char *dir, *build, *flavor; int vdf; } fixture[] = {
+        { "arc",            "26.3.0.39832\n",          NULL,        1 },
+        { "arcfex",         " 27.0.0.40921-fex \n",    NULL,        1 },
+        { "arcfexr",        "27.0.0.40921-fex\n",      "rosetta\n", 1 },
+        { "fexmac",         NULL,                      NULL,        1 },
+        { "stray",          "26.3.0.39832\n",          NULL,        0 },
+        { "unknown",        "9.9.9\n",                 NULL,        1 },
+        { "bad",            "26.3.0.39832;x\n",        NULL,        1 },
+        { "notproton-26.3", "26.3.0.39832\n",          "rosetta\n", 1 },
+        { "nonl",           "26.3.0.39832",            NULL,        1 },
+        { "crlf",           "26.3.0.39832\r\n",        NULL,        1 },
+        { "arcfexn",        "27.0.0.40921-fex\n",      "rosetta",   1 },
+    };
+    if (system("rm -rf out/compatcheck-adopt") != 0 || mkdir(root, 0755) != 0) {
+        check(0, "the adopted tool fixture can be made");
+        return;
+    }
+    char p[256];
+    for (size_t i = 0; i < sizeof(fixture) / sizeof(fixture[0]); i++) {
+        snprintf(p, sizeof(p), "%s/%s", root, fixture[i].dir);
+        mkdir(p, 0755);
+        if (fixture[i].vdf) {
+            snprintf(p, sizeof(p), "%s/%s/compatibilitytool.vdf", root, fixture[i].dir);
+            put_file(p, "\"compatibilitytools\" {}\n");
+        }
+        if (fixture[i].build) {
+            snprintf(p, sizeof(p), "%s/%s/build", root, fixture[i].dir);
+            put_file(p, fixture[i].build);
+        }
+        if (fixture[i].flavor) {
+            snprintf(p, sizeof(p), "%s/%s/flavor", root, fixture[i].dir);
+            put_file(p, fixture[i].flavor);
+        }
+    }
+    put_file(list, "notproton\t27.0.0.40921-fex\tfex\tCrossOver Preview (FEX)\n"
+                   "notproton-26.3\t26.3.0.39832\trosetta\tCrossOver 26.3\n");
+
+    check(np_compat_load_tool_list(list, root) == 2, "the adopted tool list loads");
+    check(np_compat_adopt_tools(root) == 4,
+          "only a tool with a compatibilitytool.vdf and a build file naming a listed build is adopted");
+    check(np_compat_runs_tool("'/t/compatibilitytools.d/arc/.'/run waitforexitandrun  '/g/game.exe'"),
+          "an adopted tool's launch gets the shell, so its launch options apply");
+    check(!np_compat_runs_tool("'/t/compatibilitytools.d/arcx/.'/run waitforexitandrun  '/g/game.exe'"),
+          "a folder that only starts with an adopted tool's name is not that tool");
+    check(!np_compat_runs_tool("'/t/compatibilitytools.d/stray/.'/run waitforexitandrun  '/g/game.exe'"),
+          "a folder that was not adopted is not a tool launch");
+
+    const char *names[8], *builds[8], *archs[8];
+    size_t n = np_compat_tool_builds(names, builds, archs, 8);
+    check(n == 6 && strcmp(names[0], "notproton") == 0 && strcmp(names[1], "notproton-26.3") == 0,
+          "the panel gets our own tools first, then the adopted ones");
+    int arc = 0, arcfex = 0, arcfexr = 0, arcfexn = 0, unread = 0;
+    for (size_t i = 2; i < n; i++) {
+        arcfexn |= strcmp(names[i], "arcfexn") == 0 && strcmp(archs[i], "aarch64") == 0;
+        unread |= strcmp(names[i], "nonl") == 0 || strcmp(names[i], "crlf") == 0;
+        arc |= strcmp(names[i], "arc") == 0 && strcmp(builds[i], "26.3.0.39832") == 0
+               && strcmp(archs[i], "x86_64") == 0;
+        arcfex |= strcmp(names[i], "arcfex") == 0 && strcmp(builds[i], "27.0.0.40921-fex") == 0
+                  && strcmp(archs[i], "aarch64") == 0;
+        arcfexr |= strcmp(names[i], "arcfexr") == 0 && strcmp(builds[i], "27.0.0.40921-fex") == 0
+                   && strcmp(archs[i], "x86_64") == 0;
+    }
+    check(arc, "a tool on a Rosetta build runs Rosetta");
+    check(arcfex, "a tool with no flavor file on a FEX build runs FEX, as the run script picks");
+    check(arcfexr, "a flavor file is honoured the way the run script reads it");
+    check(!unread, "a build file the run script's read would come up empty on is not adopted");
+    check(arcfexn, "a flavor file the run script's read would come up empty on is ignored");
+
+    const char *fex[4] = { NULL, NULL, NULL, NULL };
+    check(np_compat_fex_tools(fex, 4) == 3 && strcmp(fex[0], "notproton") == 0
+          && (strcmp(fex[1], "arcfex") == 0 || strcmp(fex[2], "arcfex") == 0),
+          "an adopted FEX tool is a FEX tool to the panel");
+
+    np_compat_tool_info_t info;
+    check(!np_compat_tool_by_name("arc", 3, &info) && g_tool_count == 2,
+          "an adopted tool is neither registered nor given the Settings page's per-tool defaults");
+
+    check(np_compat_load_tool_list(list, root) == 2 && np_compat_tool_builds(names, builds, archs, 8) == 2,
+          "reloading the list drops what was adopted from the old one");
+    check(np_compat_adopt_tools("out/compatcheck-adopt-missing") == 0,
+          "a missing folder adopts nothing");
+
+    unlink(list);
+    if (system("rm -rf out/compatcheck-adopt") != 0) check(0, "the adopted tool fixture is removed");
 }
 
 static void tool_launch_cases(void) {
@@ -825,6 +925,7 @@ int main(void) {
     manager_cases();
     registration_cases();
     tool_list_cases();
+    adopted_tool_cases();
     tool_launch_cases();
     stale_tool_cases();
     installed_fn_cases();
