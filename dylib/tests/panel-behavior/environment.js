@@ -92,6 +92,13 @@ const deferred = () => { let resolve; const promise = new Promise(r => { resolve
     assert.equal(editor.field.disabled, false);
     assert.equal(editor.retry.hidden, true);
     assert.deepEqual(p.written, [], 'editor never calls SetAppLaunchOptions');
+    const named = panel(emit, form, globals, { ourTools: [['notproton-fex', '27.0']] });
+    const namedSections = walk(named.render({ details: details('', { strCompatToolName: 'notproton-fex' }) }))
+      .filter(x => x.type === 'Section').map(x => x.props.label);
+    assert.equal(namedSections.at(-1), 'Environment variables', 'named NotProton tools show the environment section');
+    const foreign = walk(named.render({ details: details('', { strCompatToolName: 'crossover-25' }) }))
+      .filter(x => x.type === 'Section').map(x => x.props.label);
+    assert.ok(!foreign.includes('Environment variables'), 'third-party tools hide the environment section');
     console.log(`==> environment editor (${form}): loading, saving, clearing, retry, ordering and launch-options isolation pass`);
   }
 })().catch(e => { console.error(e); process.exitCode = 1; });
