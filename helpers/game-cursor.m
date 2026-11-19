@@ -211,7 +211,9 @@ __attribute__((constructor)) static void setupCursor(void) {
             Method method = class_getInstanceMethod(NSCursor.class, @selector(set));
             cursorSet = (void *)method_getImplementation(method);
             method_setImplementation(method, (IMP)setCursor);
-            npWatchPresentation();
+            // The native Space helper owns presentation for opted-in launches.
+            const char *size = getenv("NOTPROTON_NATIVE_SIZE");
+            if (!size || !*size) npWatchPresentation();
             startWatching();
         });
     }
