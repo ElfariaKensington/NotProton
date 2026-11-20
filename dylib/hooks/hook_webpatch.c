@@ -15,7 +15,6 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <sys/stat.h>
-#include <sys/syscall.h>
 #include <stdio.h>
 #include <errno.h>
 
@@ -29,15 +28,16 @@
     }
 
 
-_Pragma("clang diagnostic push")
-_Pragma("clang diagnostic ignored \"-Wdeprecated-declarations\"")
-static int sys_open(const char *path, int oflag, mode_t mode) {
-    return (int)syscall(SYS_open, path, oflag, mode);
+// dyld chains interposers: this image's own calls to open/openat/fopen skip its own
+// tuples and reach the next inserted library's interposer (or libc). Reading and
+// falling through that way, instead of with raw syscalls, keeps the steamui edits
+// of a library loaded before this one (macsteam) instead of silently dropping them.
+static int next_open(const char *path, int oflag, mode_t mode) {
+    return open(path, oflag, mode);
 }
-static int sys_openat(int dirfd, const char *path, int oflag, mode_t mode) {
-    return (int)syscall(SYS_openat, dirfd, path, oflag, mode);
+static int next_openat(int dirfd, const char *path, int oflag, mode_t mode) {
+    return openat(dirfd, path, oflag, mode);
 }
-_Pragma("clang diagnostic pop")
 
 #define WEBPATCH_MAX_CHUNK (32 * 1024 * 1024)
 
@@ -103,7 +103,7 @@ static int spill_to_temp(const char *bytes, size_t len) {
 static int open_patched(const char *path) {
     np_log_attach();
 
-    int in = sys_open(path, O_RDONLY, 0);
+    int in = next_open(path, O_RDONLY, 0);
     if (in < 0)
         return -1;
 
@@ -176,7 +176,7 @@ static int np_open(const char *path, int oflag, ...) {
     int served = try_serve(path, oflag);
     if (served >= 0)
         return served;
-    return sys_open(path, oflag, mode);
+    return next_open(path, oflag, mode);
 }
 
 static int np_openat(int dirfd, const char *path, int oflag, ...) {
@@ -189,7 +189,7 @@ static int np_openat(int dirfd, const char *path, int oflag, ...) {
         if (served >= 0)
             return served;
     }
-    return sys_openat(dirfd, path, oflag, mode);
+    return next_openat(dirfd, path, oflag, mode);
 }
 
 static int mode_string_flags(const char *mode) {
@@ -229,19 +229,7 @@ static FILE *np_fopen(const char *path, const char *mode) {
         close(served);
     }
 
-    int fd = sys_open(path, oflag, 0666);
-    if (fd < 0)
-        return NULL;
-    FILE *fp = fdopen(fd, mode);
-    if (!fp) {
-        int e = errno;
-        close(fd);
-        errno = e;
-    } else if (oflag & O_APPEND) {
-        // fopen leaves an append stream at the end, fdopen does not
-        fseeko(fp, 0, SEEK_END);
-    }
-    return fp;
+    return fopen(path, mode);
 }
 
 DYLD_INTERPOSE(np_open, open);
