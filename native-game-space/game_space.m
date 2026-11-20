@@ -211,13 +211,24 @@ static void postFrame(NSWindow *w, SEL cmd, NSRect frame, BOOL fullscreen, BOOL 
 // Launcher and driver-warning dialogs are Wine windows too, and must never be stretched to the
 // game size. The game's own window either renders through a Metal/GL surface or already has the
 // requested size.
+static BOOL hasRenderLayer(CALayer *layer, int depth) {
+    if (!layer || depth > 6) return NO;
+    NSString *name = NSStringFromClass(layer.class);
+    // Direct3D 9 titles (e.g. Sonic Adventure 2) present through an OpenGL-backed layer.
+    if ([layer isKindOfClass:CAMetalLayer.class] || [name containsString:@"Metal"] || [name containsString:@"OpenGL"])
+        return YES;
+    for (CALayer *child in layer.sublayers)
+        if (hasRenderLayer(child, depth + 1)) return YES;
+    return NO;
+}
+
+// Translation layers nest their drawable at different depths, so search the
+// whole layer tree, not only the view's own layer and its direct sublayers.
 static BOOL hasRenderSurface(NSView *view, int depth) {
     if (depth > 8) return NO;
     NSString *name = NSStringFromClass(view.class);
-    if ([view.layer isKindOfClass:CAMetalLayer.class] || [name containsString:@"Metal"] ||
-        [name containsString:@"OpenGL"]) return YES;
-    for (CALayer *layer in view.layer.sublayers)
-        if ([layer isKindOfClass:CAMetalLayer.class]) return YES;
+    if ([name containsString:@"Metal"] || [name containsString:@"OpenGL"] || hasRenderLayer(view.layer, 0))
+        return YES;
     for (NSView *child in view.subviews)
         if (hasRenderSurface(child, depth + 1)) return YES;
     return NO;
