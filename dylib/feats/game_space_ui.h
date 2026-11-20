@@ -10,10 +10,10 @@
     "const make=(tag,text)=>{const n=document.createElement(tag);if(text)n.textContent=text;return n}," \
     "box=make(\"div\"),label=make(\"label\",\"Game resolution\"),select=make(\"select\"),custom=make(\"div\")," \
     "width=make(\"input\"),height=make(\"input\"),apply=make(\"button\",\"Apply\"),status=make(\"span\")," \
-    "description=make(\"div\",\"Fixed game-window size in pixels, presented in a native macOS fullscreen Space. The Mac display is not changed. Applies next launch. Games may override their internal rendering resolution.\");" \
+    "description=make(\"div\",\"Game-window size in pixels, presented in its own native macOS fullscreen Space. Defaults to the screen size; add NOTPROTON_NATIVE_SPACE=0 to launch options to keep the game on the desktop. The Mac display is not changed. Applies next launch. Games may override their internal rendering resolution.\");" \
     "box.style.cssText=\"width:100%;display:flex;flex-direction:column;gap:8px\";" \
     "label.style.fontWeight=\"500\";label.append(select);select.style.cssText=\"margin-left:16px;max-width:100%;padding:6px;color:inherit;background:#232d3b;border:1px solid #536173;border-radius:3px\";" \
-    "[[\"\",\"Off (game controlled)\"],...sizes.map(x=>[x,x.replace(\"x\",\" \\u00d7 \")]),[\"custom\",\"Custom...\"]].forEach(([v,t])=>{const o=make(\"option\",t);o.value=v;select.append(o)});" \
+    "[[\"\",\"Screen size (default)\"],...sizes.map(x=>[x,x.replace(\"x\",\" \\u00d7 \")]),[\"custom\",\"Custom...\"]].forEach(([v,t])=>{const o=make(\"option\",t);o.value=v;select.append(o)});" \
     "select.value=mode===\"custom\"||value&&!sizes.includes(value)?\"custom\":value;" \
     "const parts=(value||\"1920x1080\").split(\"x\");[width,height].forEach((n,i)=>{n.type=\"number\";n.min=\"200\";n.max=\"16384\";n.step=\"1\";n.value=parts[i]||\"\";n.setAttribute(\"aria-label\",i?\"Height in pixels\":\"Width in pixels\");n.style.cssText=\"width:100px;padding:6px;color:inherit;background:#17212e;border:1px solid #536173;border-radius:3px\"});width.min=\"320\";" \
     "custom.style.cssText=\"display:flex;align-items:center;flex-wrap:wrap;gap:8px\";" \

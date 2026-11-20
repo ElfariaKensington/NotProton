@@ -3117,11 +3117,22 @@ if [ "$foreground" = 0 ]; then
   exit $status
 fi
 
-# Native game-window presentation is opt-in and inherited by game subprocesses.
+# Every game is presented in its own native macOS Space, inherited by game subprocesses.
+# A chosen size fixes the game's resolution; without one the Space library uses the main
+# display's size ("auto"). NOTPROTON_NATIVE_SPACE=0 in launch options turns it off.
 NOTPROTON_NATIVE_SPACE_LIBRARY=""
+np_native_auto=0
+if [ -z "${NOTPROTON_NATIVE_SIZE:-}" ] && [ "${NOTPROTON_NATIVE_SPACE:-1}" != 0 ]; then
+  NOTPROTON_NATIVE_SIZE=auto
+  np_native_auto=1
+fi
+if [ "${NOTPROTON_NATIVE_SPACE:-1}" = 0 ]; then
+  NOTPROTON_NATIVE_SIZE=""
+fi
 if [ -n "${NOTPROTON_NATIVE_SIZE:-}" ]; then
   np_native_valid=0
   case "$NOTPROTON_NATIVE_SIZE" in
+    auto) np_native_valid=1 ;;
     *[!0-9x]*|*x*x*|x*|*x) ;;
     *x*)
       np_native_w=${NOTPROTON_NATIVE_SIZE%%x*}
@@ -3137,19 +3148,29 @@ if [ -n "${NOTPROTON_NATIVE_SIZE:-}" ]; then
     exit 1
   fi
   NOTPROTON_NATIVE_SPACE_LIBRARY="$np_support/native-game-space.dylib"
-  if [ ! -f "$NOTPROTON_NATIVE_SPACE_LIBRARY" ]; then
-    show_alert "Native game Space is missing" "Install this NotProton build before using the game resolution setting."
-    exit 1
-  fi
   case "$NOTPROTON_NATIVE_SPACE_LIBRARY" in
-    *:*) show_alert "Unsupported installation path" "Native game Spaces require a support path without a colon."; exit 1 ;;
+    *:*) np_native_unusable="Native game Spaces require a support path without a colon." ;;
+    *) np_native_unusable=""
+       [ -f "$NOTPROTON_NATIVE_SPACE_LIBRARY" ] ||
+         np_native_unusable="Install this NotProton build before using the game resolution setting." ;;
   esac
+  if [ -n "$np_native_unusable" ]; then
+    # The default Space is a presentation choice; a game still runs without it.
+    if [ "$np_native_auto" = 1 ]; then
+      NOTPROTON_NATIVE_SIZE=""
+      NOTPROTON_NATIVE_SPACE_LIBRARY=""
+      echo "native Space: off ($np_native_unusable)" >> "$log" 2>&1 || true
+    else
+      show_alert "Native game Space is unavailable" "$np_native_unusable"
+      exit 1
+    fi
+  fi
 fi
 # Counter-Strike: Source takes an explicit startup backbuffer size.
 # Put the selection first among game arguments for Source's first-match lookup.
 case "$app_id:${target##*/}" in
   240:cstrike.exe|240:cstrike_win64.exe|240:hl2.exe)
-    if [ -n "$NOTPROTON_NATIVE_SPACE_LIBRARY" ]; then
+    if [ -n "$NOTPROTON_NATIVE_SPACE_LIBRARY" ] && [ "$np_native_auto" != 1 ]; then
       shift
       set -- "$target" -width "$np_native_w" -height "$np_native_h" "$@"
     fi
