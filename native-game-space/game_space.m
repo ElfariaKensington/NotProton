@@ -39,6 +39,7 @@ static BOOL changedPresentation;
 static void scheduleEntry(NSWindow *w);
 static void fitWindow(NSWindow *w);
 static void promoteGameProcess(void);
+static void solidTitlebar(NSWindow *w);
 
 
 static const NSApplicationPresentationOptions hiddenChrome = NSApplicationPresentationHideDock |
@@ -173,6 +174,7 @@ static void configure(NSWindow *w) {
                     NSWindowCollectionBehaviorParticipatesInCycle |
                     NSWindowCollectionBehaviorFullScreenPrimary;
         if (w.collectionBehavior != behavior) w.collectionBehavior = behavior;
+        solidTitlebar(w);
     }
     NSSize logical = logicalSize(s);
     if (!NSEqualSizes(w.contentView.bounds.size, logical)) w.contentView.boundsSize = logical;
@@ -232,6 +234,18 @@ static BOOL hasRenderSurface(NSView *view, int depth) {
     for (NSView *child in view.subviews)
         if (hasRenderSurface(child, depth + 1)) return YES;
     return NO;
+}
+
+// Wine gives its windows a clear background so layered windows can show what is
+// behind them. On a titled window that leaves the title bar see-through, showing
+// the desktop under the title. Give titled windows the standard window background.
+static void solidTitlebar(NSWindow *w) {
+    if (![w isKindOfClass:wineClass] || !(w.styleMask & NSWindowStyleMaskTitled) ||
+        (w.styleMask & NSWindowStyleMaskFullScreen)) return;
+    if (w.titlebarAppearsTransparent) w.titlebarAppearsTransparent = NO;
+    NSColor *rgb = [w.backgroundColor colorUsingColorSpace:NSColorSpace.sRGBColorSpace];
+    if (rgb && rgb.alphaComponent >= 1) return;
+    w.backgroundColor = NSColor.windowBackgroundColor;
 }
 
 // Games such as Unreal titles keep a titled 2-pixel-high guard window around. Windows draws
@@ -475,6 +489,7 @@ static BOOL gameSized(NSWindow *w) {
 static void (*originalDraw)(id, SEL);
 static void drawn(NSWindow *w, SEL cmd) {
     originalDraw(w, cmd);
+    solidTitlebar(w);
     frontNewWindow(w);
     if (w.visible && (w.keyWindow || !managedWindow)) {
         attach(w);
@@ -613,6 +628,7 @@ static void style(NSWindow *w, SEL cmd, NSWindowStyleMask mask) {
         mask = w.styleMask;
     }
     originalStyle(w, cmd, mask);
+    solidTitlebar(w);
 }
 static void (*originalToggle)(id, SEL, id);
 static void toggle(NSWindow *w, SEL cmd, id sender) {
@@ -991,7 +1007,7 @@ static void install(void) {
     // A game's Metal surface can appear after its window was last drawn or resized, with no
     // notification of its own. Re-check until a game window is found.
     [observers addObject:[NSTimer scheduledTimerWithTimeInterval:1 repeats:YES block:^(NSTimer *t) {
-        for (NSWindow *w in NSApp.windows) if (w.visible) { hideSliver(w); frontNewWindow(w); }
+        for (NSWindow *w in NSApp.windows) if (w.visible) { hideSliver(w); solidTitlebar(w); frontNewWindow(w); }
         // Leaving a native Space settles after its notifications, while the window
         // is not yet on the active Space, so a pointer mapping taken then is stale.
         if (managedWindow) { syncPresentation(); updateCursorMapping(managedWindow); return; }
