@@ -1025,7 +1025,19 @@ __attribute__((constructor)) static void start(void) {
     if (!value && _NSGetExecutablePath(executable, &capacity) == 0 &&
         np_game_space_manifest(executable, manifest, sizeof(manifest))) value = manifest;
     unsigned width, height;
-    if (!np_game_space_size(value, &width, &height)) return;
+    // "auto" (no size chosen) presents the game at the main display's pixel size,
+    // which at Wine's 2x Retina scale fills the screen exactly.
+    if (value && !strcmp(value, "auto")) {
+        CGDisplayModeRef mode = CGDisplayCopyDisplayMode(CGMainDisplayID());
+        size_t w = mode ? CGDisplayModeGetPixelWidth(mode) : 0, h = mode ? CGDisplayModeGetPixelHeight(mode) : 0;
+        if (mode) CGDisplayModeRelease(mode);
+        char size[32];
+        snprintf(size, sizeof size, "%zux%zu", w, h);
+        if (!np_game_space_size(size, &width, &height)) {
+            fprintf(stderr, "[native-space] display size %s unusable, Space off\n", size);
+            return;
+        }
+    } else if (!np_game_space_size(value, &width, &height)) return;
     pixels = NSMakeSize(width, height);
     np_game_space_set_display_size(width, height);
     fprintf(stderr, "[native-space] requested %ux%u in pid %d\n", width, height, getpid());
