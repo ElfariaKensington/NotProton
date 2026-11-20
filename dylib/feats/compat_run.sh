@@ -2859,7 +2859,8 @@ if [ "$foreground" = 0 ]; then
   exit $status
 fi
 
-# Every game is presented in its own native macOS Space, inherited by game subprocesses.
+# Borderless and fullscreen games are presented in their own native macOS Space
+# (windowed games stay on the desktop); inherited by game subprocesses.
 # A chosen size fixes the game's resolution; without one ("auto") the game keeps its own
 # display modes and the Space follows its window size. NOTPROTON_NATIVE_SPACE=0 in launch
 # options turns it off.

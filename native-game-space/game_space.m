@@ -16,6 +16,7 @@
 static NSSize pixels;
 // No size chosen: follow the game window's own size instead of imposing one.
 static BOOL autoSize;
+static atomic_bool exclusiveMode;
 static Class wineClass;
 static char stateKey;
 static char frontedKey;
@@ -119,11 +120,10 @@ static void syncPresentation(void) {
 }
 
 static BOOL wantsFullscreen(NPGameWindowState *s) {
-    // A fixed game size always gets its own native Space, whether the game asks for
-    // exclusive fullscreen, a borderless window or a decorated window. The player can
-    // still leave the Space with the window's fullscreen control.
-    (void)s;
-    return YES;
+    // A game that runs borderless or switches the display to fullscreen gets its own
+    // native Space. A window with a title bar is the player's windowed choice and
+    // stays on the desktop; the window's fullscreen control still moves it.
+    return !s.decorated || atomic_load(&exclusiveMode);
 }
 
 static NSSize logicalSize(NPGameWindowState *s) {
@@ -438,8 +438,7 @@ static void tryEntry(NSWindow *w) {
 }
 
 void np_game_space_display_mode(bool fullscreen) {
-    (void)fullscreen;
-    // A game display-mode change returns a window the player took out of its Space.
+    atomic_store(&exclusiveMode, fullscreen);
     CFRunLoopPerformBlock(CFRunLoopGetMain(), kCFRunLoopDefaultMode, ^{
         NSWindow *w = managedWindow;
         NPGameWindowState *s = state(w);
