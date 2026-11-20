@@ -2860,8 +2860,9 @@ if [ "$foreground" = 0 ]; then
 fi
 
 # Every game is presented in its own native macOS Space, inherited by game subprocesses.
-# A chosen size fixes the game's resolution; without one the Space library uses the main
-# display's size ("auto"). NOTPROTON_NATIVE_SPACE=0 in launch options turns it off.
+# A chosen size fixes the game's resolution; without one ("auto") the game keeps its own
+# display modes and the Space follows its window size. NOTPROTON_NATIVE_SPACE=0 in launch
+# options turns it off.
 NOTPROTON_NATIVE_SPACE_LIBRARY=""
 np_native_auto=0
 if [ -z "${NOTPROTON_NATIVE_SIZE:-}" ] && [ "${NOTPROTON_NATIVE_SPACE:-1}" != 0 ]; then

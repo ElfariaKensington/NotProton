@@ -113,8 +113,11 @@ int main(int argc, char **argv) {
     assert(!np_game_space_manifest(executable, value, 5));
 
     const struct np_user_driver original = {.change_settings = change, .update_devices = update};
-    np_game_space_set_display_size(3841, 2161);
     np_game_space_original_registration = registration;
+    // "auto" (no size set): the game keeps Wine's own display modes and mode changes.
+    np_game_space_set_driver(&original, 110);
+    assert(registered_version == 110 && driver.change_settings == change && driver.update_devices == update);
+    np_game_space_set_display_size(3841, 2161);
     np_game_space_set_driver(&original, 109);
     assert(registered == &original && registered_version == 109);
     np_game_space_set_driver(&original, 110);

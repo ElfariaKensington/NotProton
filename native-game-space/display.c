@@ -108,8 +108,12 @@ void np_game_space_set_driver(const struct np_user_driver *driver, unsigned vers
         get_cursor = driver->get_cursor;
         copy.get_cursor = cursor;
     }
-    copy.update_devices = update;
-    copy.change_settings = change;
+    // Without a fixed size ("auto") the game keeps Wine's real display modes and
+    // its own resolution choice; only the pointer mapping is needed.
+    if (width && height) {
+        copy.update_devices = update;
+        copy.change_settings = change;
+    }
     register_driver(&copy, version);
 }
 

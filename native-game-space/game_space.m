@@ -14,6 +14,8 @@
 #include "input.h"
 
 static NSSize pixels;
+// No size chosen: follow the game window's own size instead of imposing one.
+static BOOL autoSize;
 static Class wineClass;
 static char stateKey;
 static char frontedKey;
@@ -239,10 +241,17 @@ static BOOL looksLikeGame(NSWindow *w) {
 static void attach(NSWindow *w) {
     if (state(w).closed) objc_setAssociatedObject(w, &stateKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     if (state(w) || (managedWindow && managedWindow != w) || !eligible(w) || !looksLikeGame(w)) return;
+    // Wine uses a fixed 2x Retina mode independently of the screen's current scale.
+    CGFloat scale = w.contentView.layer.mask.contentsScale >= 2 ? 2 : 1;
+    if (autoSize) {
+        NSSize content = [w contentRectForFrameRect:w.frame].size;
+        NSSize size = NSMakeSize(round(content.width * scale), round(content.height * scale));
+        if (size.width < 320 || size.height < 200) return;
+        pixels = size;
+    }
     NPGameWindowState *s = [NPGameWindowState new];
     s.attachedAt = NSProcessInfo.processInfo.systemUptime;
-    // Wine uses a fixed 2x Retina mode independently of the screen's current scale.
-    s.scale = w.contentView.layer.mask.contentsScale >= 2 ? 2 : 1;
+    s.scale = scale;
     s.decorated = (w.styleMask & NSWindowStyleMaskTitled) != 0;
     s.requestedFullscreen = wantsFullscreen(s) || (w.styleMask & NSWindowStyleMaskFullScreen);
     s.pendingEntry = YES;
@@ -524,8 +533,24 @@ static void wineFrame(NSWindow *w, SEL cmd, NSRect rect) {
         updateCursorMapping(w);
     }
     if (s.layout || s.transitioning || s.closed || NSIsEmptyRect(rect)) return;
-    configure(w);
     NSSize desired = logicalSize(s);
+    if (autoSize && !NSEqualSizes(rect.size, desired) &&
+        rect.size.width * s.scale >= 320 && rect.size.height * s.scale >= 200) {
+        // The game changed its own resolution: present the new size instead of reverting it.
+        pixels = NSMakeSize(round(rect.size.width * s.scale), round(rect.size.height * s.scale));
+        fprintf(stderr, "[native-space] game resized to %.0fx%.0f pixels\n", pixels.width, pixels.height);
+        s.wineFrame = rect;
+        s.hasWineFrame = YES;
+        s.lastRejected = NSZeroRect;
+        s.sentSize = NO;
+        s.fitPending = !(w.styleMask & NSWindowStyleMaskFullScreen);
+        configure(w);
+        fitWindow(w);
+        report(w, !!(w.styleMask & NSWindowStyleMaskFullScreen), NO, YES);
+        updateCursorMapping(w);
+        return;
+    }
+    configure(w);
     if (NSEqualSizes(rect.size, desired)) {
         s.lastRejected = NSZeroRect;
     } else if (!NSEqualRects(rect, s.lastRejected)) {
@@ -1025,19 +1050,15 @@ __attribute__((constructor)) static void start(void) {
     if (!value && _NSGetExecutablePath(executable, &capacity) == 0 &&
         np_game_space_manifest(executable, manifest, sizeof(manifest))) value = manifest;
     unsigned width, height;
-    // "auto" (no size chosen) presents the game at the main display's pixel size,
-    // which at Wine's 2x Retina scale fills the screen exactly.
+    // "auto" (no size chosen) keeps Wine's display modes and the game's own resolution;
+    // the size is taken from the game window once it appears.
     if (value && !strcmp(value, "auto")) {
-        CGDisplayModeRef mode = CGDisplayCopyDisplayMode(CGMainDisplayID());
-        size_t w = mode ? CGDisplayModeGetPixelWidth(mode) : 0, h = mode ? CGDisplayModeGetPixelHeight(mode) : 0;
-        if (mode) CGDisplayModeRelease(mode);
-        char size[32];
-        snprintf(size, sizeof size, "%zux%zu", w, h);
-        if (!np_game_space_size(size, &width, &height)) {
-            fprintf(stderr, "[native-space] display size %s unusable, Space off\n", size);
-            return;
-        }
-    } else if (!np_game_space_size(value, &width, &height)) return;
+        autoSize = YES;
+        fprintf(stderr, "[native-space] requested auto size in pid %d\n", getpid());
+        _dyld_register_func_for_add_image(imageAdded);
+        return;
+    }
+    if (!np_game_space_size(value, &width, &height)) return;
     pixels = NSMakeSize(width, height);
     np_game_space_set_display_size(width, height);
     fprintf(stderr, "[native-space] requested %ux%u in pid %d\n", width, height, getpid());
