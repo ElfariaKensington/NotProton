@@ -33,8 +33,6 @@ static CGFloat cursorScale;
 static void updateCursorMapping(NSWindow *w);
 static NSApplicationPresentationOptions savedChrome;
 static BOOL changedPresentation;
-static atomic_bool exclusiveMode;
-static BOOL fullscreenFromWindowStyle;
 static void scheduleEntry(NSWindow *w);
 static void fitWindow(NSWindow *w);
 static void promoteGameProcess(void);
@@ -119,9 +117,11 @@ static void syncPresentation(void) {
 }
 
 static BOOL wantsFullscreen(NPGameWindowState *s) {
-    // These games can show an undecorated fullscreen window without a
-    // successful exclusive display-mode change.
-    return fullscreenFromWindowStyle ? !s.decorated : atomic_load(&exclusiveMode);
+    // A fixed game size always gets its own native Space, whether the game asks for
+    // exclusive fullscreen, a borderless window or a decorated window. The player can
+    // still leave the Space with the window's fullscreen control.
+    (void)s;
+    return YES;
 }
 
 static NSSize logicalSize(NPGameWindowState *s) {
@@ -317,13 +317,14 @@ static void activateGameProcess(void) {
 #pragma clang diagnostic pop
 }
 
-// Single-icon launches inject game-client.dylib, which keeps every Wine process an
-// accessory app so only the launcher shows in the Dock. An accessory app never owns
-// the menu bar and cannot hide it, so the app that was in front keeps its menu bar
-// over the game. Make the game process a regular app. game-client overrides
-// -setActivationPolicy: to turn Regular back into Accessory, so transform directly.
+// An accessory Wine process never owns the menu bar and cannot hide it, so the app
+// that was in front keeps its menu bar over the game. Make the game process a
+// regular app. Single-icon sessions (game-client.dylib, NOTPROTON_GAME_CHANNEL) are
+// left alone: their launcher host owns the Dock tile, and a promoted Wine process
+// would add a second, generic "EXE" tile.
 static void promoteGameProcess(void) {
     if (NSApp.activationPolicy == NSApplicationActivationPolicyRegular) return;
+    if (getenv("NOTPROTON_GAME_CHANNEL")) return;
     ProcessSerialNumber process;
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
@@ -331,7 +332,14 @@ static void promoteGameProcess(void) {
     if (status == noErr) status = TransformProcessType(&process, kProcessTransformToForegroundApplication);
 #pragma clang diagnostic pop
     fprintf(stderr, "[native-space] made game process a regular app: status %d\n", (int)status);
-    NSString *icon = [NSBundle.mainBundle pathForResource:@"game" ofType:@"icns"];
+    // CrossOver runs each Windows process from a temporary per-executable link, so
+    // the main bundle is not the game's launcher. WINELOADER lives inside it.
+    NSString *loader = NSProcessInfo.processInfo.environment[@"WINELOADER"];
+    NSString *contents = loader.stringByDeletingLastPathComponent.stringByDeletingLastPathComponent;
+    NSString *icon = [contents.lastPathComponent isEqualToString:@"Contents"] ?
+        [contents stringByAppendingPathComponent:@"Resources/game.icns"] : nil;
+    if (![NSFileManager.defaultManager fileExistsAtPath:icon])
+        icon = [NSBundle.mainBundle pathForResource:@"game" ofType:@"icns"];
     NSImage *image = icon ? [[NSImage alloc] initWithContentsOfFile:icon] : nil;
     if (image) NSApp.applicationIconImage = image;
     // The process may already be in front as an accessory; front it again so it
@@ -410,11 +418,12 @@ static void tryEntry(NSWindow *w) {
 }
 
 void np_game_space_display_mode(bool fullscreen) {
-    atomic_store(&exclusiveMode, fullscreen);
+    (void)fullscreen;
+    // A game display-mode change returns a window the player took out of its Space.
     CFRunLoopPerformBlock(CFRunLoopGetMain(), kCFRunLoopDefaultMode, ^{
         NSWindow *w = managedWindow;
         NPGameWindowState *s = state(w);
-        if (s && !fullscreenFromWindowStyle && s.requestedFullscreen != wantsFullscreen(s)) {
+        if (s && s.requestedFullscreen != wantsFullscreen(s)) {
             s.requestedFullscreen = wantsFullscreen(s);
             s.fitPending = YES;
             s.pendingEntry = YES;
@@ -541,7 +550,7 @@ static void features(NSWindow *w, SEL cmd, const void *p) {
     if (s && s.decorated != decorated) {
         if (decorated && !s.transitioning && !(w.styleMask & NSWindowStyleMaskFullScreen) && !w.zoomed)
             s.windowedFrame = w.frame;
-        s.requestedFullscreen = !s.decorated && wantsFullscreen(s);
+        s.requestedFullscreen = wantsFullscreen(s);
         s.fitPending = YES;
         s.pendingEntry = YES;
         scheduleEntry(w);
@@ -1019,19 +1028,6 @@ __attribute__((constructor)) static void start(void) {
     if (!np_game_space_size(value, &width, &height)) return;
     pixels = NSMakeSize(width, height);
     np_game_space_set_display_size(width, height);
-    const char *appID = getenv("STEAM_COMPAT_APP_ID");
-    BOOL belowZero = appID && !strcmp(appID, "848450");
-    BOOL source = appID && !strcmp(appID, "240");
-    @autoreleasepool {
-        NSString *bundle = NSBundle.mainBundle.bundleIdentifier;
-        belowZero |= [bundle isEqualToString:@"com.notproton.launcher.848450"];
-        source |= [bundle isEqualToString:@"com.notproton.launcher.240"];
-    }
-    // Source also supports explicit borderless windowed launches.
-    char **argv = *_NSGetArgv();
-    for (int i = 1; source && i < *_NSGetArgc(); i++)
-        if (!strcasecmp(argv[i], "-noborder")) source = NO;
-    fullscreenFromWindowStyle = belowZero || source;
     fprintf(stderr, "[native-space] requested %ux%u in pid %d\n", width, height, getpid());
     _dyld_register_func_for_add_image(imageAdded);
 }
