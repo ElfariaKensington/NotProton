@@ -86,9 +86,31 @@ static NPGameWindowState *state(NSWindow *w) {
     return objc_getAssociatedObject(w, &stateKey);
 }
 
+// Inside a native fullscreen Space macOS honours HideMenuBar but ignores HideDock, so a
+// bottom-edge hit still slides the Dock in over the game. Wine keeps an active fullscreen
+// window above the Dock and the menu bar (NSStatusWindowLevel + 1); do the same while the
+// game is the key window of its own Space, and return to normal level as soon as another
+// window, app or Space takes over or the Space transition starts.
+static NSInteger gameLevel(NSWindow *w) {
+    NPGameWindowState *s = state(w);
+    NSWindow *key = NSApp.keyWindow;
+    if (!s || s.closed || s.transitioning || !(w.styleMask & NSWindowStyleMaskFullScreen) || !NSApp.active ||
+        !w.visible || w.miniaturized || !w.onActiveSpace || (key && key != w)) return NSNormalWindowLevel;
+    return NSStatusWindowLevel + 1;
+}
+
+static void syncLevel(NSWindow *w) {
+    if (!state(w)) return;
+    NSInteger level = gameLevel(w);
+    if (w.level == level) return;
+    fprintf(stderr, "[native-space] window level %ld\n", (long)level);
+    w.level = level;
+}
+
 static void syncPresentation(void) {
     NSWindow *w = managedWindow;
     NPGameWindowState *s = state(w);
+    syncLevel(w);
     BOOL native = (w.styleMask & NSWindowStyleMaskFullScreen) != 0;
     NSScreen *screen = w.screen;
     BOOL borderless = w.keyWindow && !s.decorated && screen && NSContainsRect(w.frame, screen.frame);
@@ -157,7 +179,7 @@ static void configure(NSWindow *w) {
         w.contentMinSize = NSMakeSize(160, 100);
         w.contentMaxSize = NSMakeSize(CGFLOAT_MAX, CGFLOAT_MAX);
         w.contentAspectRatio = pixels;
-        w.level = NSNormalWindowLevel;
+        w.level = gameLevel(w);
         w.hidesOnDeactivate = NO;
         BOOL movable = !(style & NSWindowStyleMaskFullScreen);
         if (w.movable != movable) w.movable = movable;
@@ -504,7 +526,7 @@ static BOOL preventResize(NSWindow *w, SEL cmd) {
 
 static NSInteger (*originalLevel)(id, SEL, BOOL);
 static NSInteger level(NSWindow *w, SEL cmd, BOOL active) {
-    return state(w) ? NSNormalWindowLevel : originalLevel(w, cmd, active);
+    return state(w) ? gameLevel(w) : originalLevel(w, cmd, active);
 }
 static BOOL (*originalIsFullscreen)(id, SEL);
 static BOOL isFullscreen(NSWindow *w, SEL cmd) {
@@ -929,6 +951,7 @@ static void install(void) {
         s.transitioning = YES;
         if (!s.modeToggle) s.requestedFullscreen = YES;
         s.modeToggle = NO;
+        syncLevel(n.object);
     });
     observe(nc, NSWindowWillExitFullScreenNotification, ^(NSNotification *n) {
         NPGameWindowState *s = state(n.object);
@@ -936,6 +959,7 @@ static void install(void) {
         if (!s.modeToggle) s.requestedFullscreen = NO;
         s.modeToggle = NO;
         s.fitPending = YES;
+        syncLevel(n.object);
     });
     for (NSString *name in @[NSWindowDidEnterFullScreenNotification, NSWindowDidExitFullScreenNotification])
         observe(nc, name, ^(NSNotification *n) {
@@ -979,6 +1003,8 @@ static void install(void) {
             syncPresentation();
             updateCursorMapping(managedWindow);
             scheduleEntry(managedWindow);
+            // AppKit updates keyWindow and the active state after these are posted.
+            dispatch_async(dispatch_get_main_queue(), ^{ syncLevel(managedWindow); });
         });
     observe(NSWorkspace.sharedWorkspace.notificationCenter, NSWorkspaceActiveSpaceDidChangeNotification,
             ^(NSNotification *n) {
