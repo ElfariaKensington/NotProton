@@ -37,7 +37,9 @@
 #define NP_C10 "\024"
 #define NP_C11 "\025"
 #define NP_C12 "\026"
-#define NP_CAP_MAX 12
+#define NP_C13 "\016"
+#define NP_C14 "\017"
+#define NP_CAP_MAX 14
 
 // Stands for the name set by np_webpatch_set_fallback_tool.
 #define NP_FALLBACK_TOOL "\021"
@@ -115,6 +117,8 @@ static int is_ident_char(unsigned char c) {
 static int cap_index(unsigned char c) {
     if (c >= (unsigned char)NP_C1[0] && c <= (unsigned char)NP_C8[0]) return c - NP_C1[0];
     if (c >= (unsigned char)NP_C9[0] && c <= (unsigned char)NP_C12[0]) return c - NP_C9[0] + 8;
+    if (c == (unsigned char)NP_C13[0]) return 12;
+    if (c == (unsigned char)NP_C14[0]) return 13;
     return -1;
 }
 
@@ -1116,10 +1120,14 @@ static int out_expand(np_out_t *o, const char *replace, const np_cap_t *caps) {
 
 #define NP_CX_PICK \
     "(t,n)=>{const o=t.strLaunchOptions||\"\";" \
-    "if(" NP_FEX_TOOLS ".indexOf(n)<0||/[<>\\n]|\\$'/.test(o))return;" \
+    "if(" NP_FEX_TOOLS ".indexOf(n)<0)return;" \
+    "const drop=(k,v)=>/^D3DM_[A-Z0-9_]*$/.test(k)||k===\"ROSETTA_ADVERTISE_AVX\"" \
+    "||(k===\"CX_GRAPHICS_BACKEND\"&&v===\"d3dmetal\");" \
+    "const S=globalThis.MSCXEnvStore;if(S){const m=S.getMap(t.unAppID),ps=[];" \
+    "m.forEach((v,k)=>{drop(k,v)&&ps.push([k,\"\"])});ps.length&&S.setPairs(t.unAppID,ps)}" \
+    "if(/[<>\\n]|\\$'/.test(o))return;" \
     "const L=MSCXLaunch(o,t.unAppID)," \
-    "ks=L.k.filter(k=>/^D3DM_[A-Z0-9_]*$/.test(k)||k===\"ROSETTA_ADVERTISE_AVX\"" \
-    "||k===\"CX_GRAPHICS_BACKEND\"&&L.g(k)===\"d3dmetal\");" \
+    "ks=L.k.filter(k=>drop(k,L.g(k)));" \
     "ks.length&&L.s(ks.map(k=>[k,\"\"]))}"
 
 // The picker refetches after the client's state notification, by which point the mapping
@@ -1493,8 +1501,17 @@ static int out_expand(np_out_t *o, const char *replace, const np_cap_t *caps) {
     "np=>{" \
     "const t=np.details,o=t.strLaunchOptions||\"\",tn=t.strCompatToolName||\"" NP_FALLBACK_TOOL "\"," \
     "fex=" NP_FEX_TOOLS ".indexOf(tn)>=0,ot=" NP_OUR_TOOLS ".find(x=>x[0]===tn)," \
-    "L=MSCXLaunch(o,t.unAppID),g=L.g,has=k=>L.k.includes(k)," \
-    "lost=globalThis.MSCXDefaultsLost,DF=lost||!(tn===\"" NP_FALLBACK_TOOL "\"||ot)?{}:(" NP_CX_BUILDS ".find(x=>x.id===tn)" \
+    "ours=tn===\"" NP_FALLBACK_TOOL "\"||!!ot," \
+    "useEnv=ours&&typeof globalThis.MSCXRoute==\"function\"&&typeof globalThis.MSCXSpecifyRoute==\"function\"," \
+    "S=useEnv?" NP_ENV_STORE_INIT ":null," \
+    "use=globalThis.MSCXUseState,eff=globalThis.MSCXUseEffect," \
+    "[,bump]=typeof use==\"function\"?use(0):[0,()=>{}];" \
+    "typeof eff==\"function\"&&eff(()=>S?S.subscribe(t.unAppID,()=>bump(x=>x+1)):undefined,[t.unAppID,useEnv]);" \
+    "const em=S?S.getMap(t.unAppID):null," \
+    "L=MSCXLaunch(o,t.unAppID),g=k=>em&&em.has(k)?em.get(k):L.g(k)," \
+    "has=k=>(em&&em.has(k))||L.k.includes(k)," \
+    "set=(ps,we)=>{if(S){S.setPairs(t.unAppID,ps);const rm=ps.filter(p=>L.k.includes(p[0])).map(p=>[p[0],\"\"]);rm.length&&L.s(rm);bump(x=>x+1)}else{L.s(ps,we)}}," \
+    "lost=globalThis.MSCXDefaultsLost,DF=lost||!ours?{}:(" NP_CX_BUILDS ".find(x=>x.id===tn)" \
     "||ot&&" NP_CX_BUILDS ".find(x=>x.build===ot[1]&&x.runner===(fex?\"fex\":\"rosetta\"))" \
     "||{}).override||" NP_CX_DEFAULTS "[fex?\"fex\":\"rosetta\"]||{}," \
     "fk=" NP_CX_FACTOR_ENTRY ",fpk=" NP_CX_FPS_ENTRY "," \
@@ -1504,11 +1521,11 @@ static int out_expand(np_out_t *o, const char *replace, const np_cap_t *caps) {
     "G=k=>\"DXMT_CONFIG\"===k?mergedDxmt:has(k)?g(k):DF[k]||\"\";" \
     "if(t.unAppID<2147483648&&(t.vecPlatforms||[]).indexOf(\"osx\")>=0" \
     "&&!t.strCompatToolName)return null;" \
-    "const panel=MSCXPanel({fex,get:G,saved:g,set:L.s,clearUnused:1,dev:1,tool:tn,app:t.unAppID," \
-    "ours:tn===\"" NP_FALLBACK_TOOL "\"||!!ot," \
+    "const panel=MSCXPanel({fex,get:G,saved:g,set,clearUnused:1,dev:1,tool:tn,app:t.unAppID," \
+    "ours," \
     "dflt:lost?null:k=>DF[k],target:(" NP_CX_TARGET ")(o,t.unAppID,t.strInstallFolder||\"\"),head:" \
     "typeof MSCXPrefixRow==\"function\"&&(0," RT ".jsx)(\"div\",{className:\"MSCXRow\",ref:e=>e&&MSCXPrefixRow(e,t.unAppID)},\"npstate\")" \
-    "});if(!panel||!(tn===\"" NP_FALLBACK_TOOL "\"||!!ot))return panel;" \
+    "});if(!panel||!ours)return panel;" \
     "return(0," RT ".jsx)(\"div\",{...panel.props,children:(0," RT ".jsxs)(" RT ".Fragment," \
     "{children:panel.props.children.props.children.concat([" NP_GAME_SPACE_ROW(RT) "])})})}"
 
@@ -1569,7 +1586,7 @@ static int out_expand(np_out_t *o, const char *replace, const np_cap_t *caps) {
 #define NP_CX_OPTIONS_COMPONENT \
     "MSCXLaunch=" NP_CX_LAUNCH ",MSCXPick=" NP_CX_PICK "," \
     "MSCXPanel=" NP_CX_CAPTURE(NP_CX_PANEL, NP_C4, NP_C5) "," \
-    "MSCXOpts=" NP_CX_GAME_ENV(NP_C4, NP_C5) ","
+    "MSCXOpts=" NP_CX_CAPTURE(NP_CX_OPTIONS_BODY, NP_C4, NP_C5) ","
 
 // Valve is testing a new compatibility page UI, this logic relates to supporting that
 #define NP_CX_OPTIONS_STATEMENT \
@@ -1577,8 +1594,11 @@ static int out_expand(np_out_t *o, const char *replace, const np_cap_t *caps) {
     "var MSCXPick=" NP_CX_PICK ";" \
     "var MSCXToolQuery=" NP_CX_TOOL_QUERY ";" \
     "var MSCXPanel=" NP_CX_CAPTURE(NP_CX_PANEL, NP_C3, NP_C4) ";" \
-    "var MSCXOpts=" NP_CX_GAME_ENV(NP_C3, NP_C4) ";" \
+    "var MSCXOpts=" NP_CX_CAPTURE(NP_CX_OPTIONS_BODY, NP_C3, NP_C4) ";" \
     "var MSCXDefaultsPage=" NP_CX_CAPTURE(NP_CX_DEFAULTS_PAGE_BODY, NP_C3, NP_C4) ";"
+
+#define NP_CX_LAUNCH_OPTIONS_UI \
+    "var MSCXLaunchOptions=" NP_CX_LAUNCH_OPTIONS(NP_C7, NP_C8) ";"
 
 // 1.0.x saved CrossOver settings without %command%, this migrates them.
 #define NP_LAUNCH_MIGRATION_RULE \
@@ -1739,6 +1759,31 @@ static const np_gate_t g_gates_selecttool[] = {
       "(0," NP_C2 ".jsx)(" NP_C3 ",{})", 1, 0 },
     { "(0," NP_C1 ".we)(\"#GameList_Entry_Invalid_OSType2\")",
       NP_COMPAT_HINT, 1, 0 },
+    // General tab Launch Options (regular games + non-Steam shortcuts)
+    { "function " NP_C1 "(" NP_C2 "){const{details:" NP_C3 "}=" NP_C2 "," NP_C4 "=" NP_C6 ".useId(),"
+      NP_C5 "=" NP_C6 ".useId();return(0," NP_C7 ".jsxs)(" NP_C8 ".XY,{label:(0," NP_C9 ".we)"
+      "(\"#AppProperties_LaunchOptionsSection\"),children:[(0," NP_C7 ".jsx)(" NP_C10 ",{details:"
+      NP_C3 "}),(0," NP_C7 ".jsx)(\"div\",{id:" NP_C5 ",className:(0," NP_C11 ".A)(" NP_C12
+      "().Detail),children:(0," NP_C9 ".we)(\"#AppProperties_LaunchOptionsDescription\")}),"
+      "(0," NP_C7 ".jsx)(" NP_C13 ",{\"aria-labelledby\":" NP_C4 ",\"aria-describedby\":" NP_C5
+      ",spellCheck:!1,value:" NP_C3 ".strLaunchOptions,setValue:" NP_C14
+      "=>SteamClient.Apps.SetAppLaunchOptions(" NP_C3 ".unAppID," NP_C14 ")})]})}",
+      NP_CX_LAUNCH_OPTIONS_UI
+      "function " NP_C1 "(" NP_C2 "){const{details:" NP_C3 "}=" NP_C2 ";return(0," NP_C7 ".jsx)("
+      NP_C8 ".XY,{children:(0," NP_C7 ".jsx)(MSCXLaunchOptions,{appId:" NP_C3 ".unAppID,value:"
+      NP_C3 ".strLaunchOptions,setValue:" NP_C14 "=>SteamClient.Apps.SetAppLaunchOptions(" NP_C3
+      ".unAppID," NP_C14 "),title:(0," NP_C9 ".we)(\"#AppProperties_LaunchOptionsSection\"),extra:(0,"
+      NP_C7 ".jsx)(" NP_C10 ",{details:" NP_C3 "})})})}", 1, 1 },
+    { "(0," NP_C1 ".jsx)(" NP_C2 ",{className:" NP_C3 "().SectionTopLine,spellCheck:!1,value:"
+      NP_C4 ".strLaunchOptions,setValue:" NP_C5 "=>SteamClient.Apps.SetShortcutLaunchOptions("
+      NP_C6 "," NP_C5 "),title:(0," NP_C7 ".we)(\"#AppProperties_LaunchOptionsSection\")})",
+      "(typeof MSCXLaunchOptions==\"function\"?(0," NP_C1 ".jsx)(MSCXLaunchOptions,{className:"
+      NP_C3 "().SectionTopLine,appId:" NP_C4 ".unAppID,value:" NP_C4 ".strLaunchOptions,setValue:"
+      NP_C5 "=>SteamClient.Apps.SetShortcutLaunchOptions(" NP_C6 "," NP_C5 "),title:(0," NP_C7
+      ".we)(\"#AppProperties_LaunchOptionsSection\")}):(0," NP_C1 ".jsx)(" NP_C2 ",{title:(0,"
+      NP_C7 ".we)(\"#AppProperties_LaunchOptionsSection\"),className:" NP_C3 "().SectionTopLine,"
+      "spellCheck:!1,value:" NP_C4 ".strLaunchOptions,setValue:" NP_C5
+      "=>SteamClient.Apps.SetShortcutLaunchOptions(" NP_C6 "," NP_C5 ")}))", 1, 1 },
 };
 
 #define NP_PLATFORM_LISTS "window.__NOTPROTON_NATIVE_PLATFORM__"

@@ -176,7 +176,7 @@ for (const form of Object.keys(FORMS)) {
   }
 
   let r = nodes('');
-  t.ok(toggles(r).length === 9 && sections(r).length === 7 && sections(r).includes('Environment'), 'automatic shows nine toggles and the environment section');
+  t.ok(toggles(r).length === 9 && sections(r).length === 6 && !sections(r).includes('Environment variables'), 'automatic shows nine toggles and six sections without the compatibility env textarea');
   t.ok(r.filter(x => x.type === 'Dropdown').length === 3, 'three dropdowns');
   t.ok(!('label' in r.find(x => x.type === 'Dropdown').props), 'the backend dropdown carries no label column');
 
@@ -304,8 +304,8 @@ for (const form of Object.keys(FORMS)) {
   raw('NOTPROTON_RAW_CONTROLLERS=1 WINEMSYNC=1').props.onChange(false);
   t.ok(last().trim() === 'WINEMSYNC=1 %command%', `turning the controller row off removes its flag (${last()})`);
   const css = nodes('').filter(x => x.type === 'style');
-  t.ok(css.length === 2 && css[0].props.children.includes('.MSCXPanel .MSCXRow{'),
-       'the panel keeps the row stylesheet alongside the environment stylesheet');
+  t.ok(css.length === 1 && css[0].props.children.includes('.MSCXPanel .MSCXRow{'),
+       'the panel keeps its single row stylesheet');
   t.ok(css[0].props.children.includes('.MSCXPanel .MSCXRowDesc>:last-child{flex-basis:100%}'),
        'and the rule that drops a description onto its own line');
 
