@@ -1118,10 +1118,14 @@ static int out_expand(np_out_t *o, const char *replace, const np_cap_t *caps) {
 
 #define NP_CX_PICK \
     "(t,n)=>{const o=t.strLaunchOptions||\"\";" \
-    "if(" NP_FEX_TOOLS ".indexOf(n)<0||/[<>\\n]|\\$'/.test(o))return;" \
+    "if(" NP_FEX_TOOLS ".indexOf(n)<0)return;" \
+    "const drop=(k,v)=>/^D3DM_[A-Z0-9_]*$/.test(k)||k===\"ROSETTA_ADVERTISE_AVX\"" \
+    "||(k===\"CX_GRAPHICS_BACKEND\"&&v===\"d3dmetal\");" \
+    "const S=globalThis.MSCXEnvStore;if(S){const m=S.getMap(t.unAppID),ps=[];" \
+    "m.forEach((v,k)=>{drop(k,v)&&ps.push([k,\"\"])});ps.length&&S.setPairs(t.unAppID,ps)}" \
+    "if(/[<>\\n]|\\$'/.test(o))return;" \
     "const L=MSCXLaunch(o,t.unAppID)," \
-    "ks=L.k.filter(k=>/^D3DM_[A-Z0-9_]*$/.test(k)||k===\"ROSETTA_ADVERTISE_AVX\"" \
-    "||k===\"CX_GRAPHICS_BACKEND\"&&L.g(k)===\"d3dmetal\");" \
+    "ks=L.k.filter(k=>drop(k,L.g(k)));" \
     "ks.length&&L.s(ks.map(k=>[k,\"\"]))}"
 
 // The picker refetches after the client's state notification, by which point the mapping
@@ -1495,8 +1499,17 @@ static int out_expand(np_out_t *o, const char *replace, const np_cap_t *caps) {
     "np=>{" \
     "const t=np.details,o=t.strLaunchOptions||\"\",tn=t.strCompatToolName||\"" NP_FALLBACK_TOOL "\"," \
     "fex=" NP_FEX_TOOLS ".indexOf(tn)>=0,ot=" NP_OUR_TOOLS ".find(x=>x[0]===tn)," \
-    "L=MSCXLaunch(o,t.unAppID),g=L.g,has=k=>L.k.includes(k)," \
-    "lost=globalThis.MSCXDefaultsLost,DF=lost||!(tn===\"" NP_FALLBACK_TOOL "\"||ot)?{}:(" NP_CX_BUILDS ".find(x=>x.id===tn)" \
+    "ours=tn===\"" NP_FALLBACK_TOOL "\"||!!ot," \
+    "useEnv=ours&&typeof globalThis.MSCXRoute==\"function\"&&typeof globalThis.MSCXSpecifyRoute==\"function\"," \
+    "S=useEnv?" NP_ENV_STORE_INIT ":null," \
+    "use=globalThis.MSCXUseState,eff=globalThis.MSCXUseEffect," \
+    "[,bump]=typeof use==\"function\"?use(0):[0,()=>{}];" \
+    "typeof eff==\"function\"&&eff(()=>S?S.subscribe(t.unAppID,()=>bump(x=>x+1)):undefined,[t.unAppID,useEnv]);" \
+    "const em=S?S.getMap(t.unAppID):null," \
+    "L=MSCXLaunch(o,t.unAppID),g=k=>em&&em.has(k)?em.get(k):L.g(k)," \
+    "has=k=>(em&&em.has(k))||L.k.includes(k)," \
+    "set=(ps,we)=>{if(S){S.setPairs(t.unAppID,ps);const rm=ps.filter(p=>L.k.includes(p[0])).map(p=>[p[0],\"\"]);rm.length&&L.s(rm);bump(x=>x+1)}else{L.s(ps,we)}}," \
+    "lost=globalThis.MSCXDefaultsLost,DF=lost||!ours?{}:(" NP_CX_BUILDS ".find(x=>x.id===tn)" \
     "||ot&&" NP_CX_BUILDS ".find(x=>x.build===ot[1]&&x.runner===(fex?\"fex\":\"rosetta\"))" \
     "||{}).override||" NP_CX_DEFAULTS "[fex?\"fex\":\"rosetta\"]||{}," \
     "fk=" NP_CX_FACTOR_ENTRY ",fpk=" NP_CX_FPS_ENTRY "," \
@@ -1506,8 +1519,8 @@ static int out_expand(np_out_t *o, const char *replace, const np_cap_t *caps) {
     "G=k=>\"DXMT_CONFIG\"===k?mergedDxmt:has(k)?g(k):DF[k]||\"\";" \
     "if(t.unAppID<2147483648&&(t.vecPlatforms||[]).indexOf(\"osx\")>=0" \
     "&&!t.strCompatToolName)return null;" \
-    "return MSCXPanel({fex,get:G,saved:g,set:L.s,clearUnused:1,dev:1,tool:tn,app:t.unAppID," \
-    "ours:tn===\"" NP_FALLBACK_TOOL "\"||!!ot," \
+    "return MSCXPanel({fex,get:G,saved:g,set,clearUnused:1,dev:1,tool:tn,app:t.unAppID," \
+    "ours," \
     "dflt:lost?null:k=>DF[k],target:(" NP_CX_TARGET ")(o,t.unAppID,t.strInstallFolder||\"\"),head:" \
     "typeof MSCXPrefixRow==\"function\"&&(0," RT ".jsx)(\"div\",{className:\"MSCXRow\",ref:e=>e&&MSCXPrefixRow(e,t.unAppID)},\"npstate\")" \
     "})}"

@@ -1156,6 +1156,36 @@ np_variant_stage_prefix() {
   done
 }
 
+# Read the prefix-local editor file as data, never as shell code. Keep a snapshot
+# for both the launcher settings and LaunchServices forwarding (last duplicate wins).
+np_game_env_text=""
+if [ "$verb" = waitforexitandrun ] && [ -n "$STEAM_COMPAT_DATA_PATH" ] \
+  && [ -r "$STEAM_COMPAT_DATA_PATH/notproton.env" ]; then
+  np_game_env_text=$(LC_ALL=C awk '
+    { sub(/\r$/, ""); eq = index($0, "="); if (!eq) next
+      key = substr($0, 1, eq - 1); gsub(/^[ \t]+|[ \t]+$/, "", key)
+      if (key !~ /^[A-Za-z_][A-Za-z0-9_]*$/) next
+      if (!(key in values)) keys[++count] = key
+      values[key] = substr($0, eq + 1)
+    }
+    END { for (i = 1; i <= count; i++) print keys[i] "=" values[keys[i]] }
+  ' "$STEAM_COMPAT_DATA_PATH/notproton.env")
+fi
+# Only settings consumed by this script enter its environment. Arbitrary names
+# are forwarded below without being able to overwrite shell variables like log.
+while IFS= read -r np_game_env_line; do
+  np_game_env_key=${np_game_env_line%%=*}
+  case "$np_game_env_key" in
+    NOTPROTON_GAME_CWD | NOTPROTON_FEATURE_DYLIBS | NOTPROTON_OVERLAY_SHIM | \
+    NOTPROTON_REBUILD_WINDOW | NOTPROTON_VARIANT_REBUILD) continue ;;
+    CX_GRAPHICS_BACKEND | D3DM_* | DXMT_* | DXVK_* | FEX_* | MTL_* | ROSETTA_* | \
+    WINEDEBUG | WINEMSYNC | WINEDLLOVERRIDES | NOTPROTON_*)
+      export "${np_game_env_line?}" ;;
+  esac
+done <<NP_GAME_ENV_SETTINGS
+$np_game_env_text
+NP_GAME_ENV_SETTINGS
+
 CX_ROOT="$np_support/runners/crossover-$np_build/CrossOver"
 np_variant=${NOTPROTON_RUNNER_VARIANT:-}
 np_variant_key=""
@@ -1187,35 +1217,6 @@ if [ "$np_flavor" = rosetta ] || [ ! -x "$WINELOADER" ] || [ ! -x "$WINESERVER" 
   [ -x "$WINESERVER" ] || WINESERVER="$CX_ROOT/bin/wineserver-x86"
 fi
 export WINELOADER WINESERVER
-
-# Read the prefix-local editor file as data, never as shell code. Keep a snapshot
-# for both the launcher settings and LaunchServices forwarding (last duplicate wins).
-np_game_env_text=""
-if [ "$verb" = waitforexitandrun ] && [ -n "$STEAM_COMPAT_DATA_PATH" ] \
-  && [ -r "$STEAM_COMPAT_DATA_PATH/notproton.env" ]; then
-  np_game_env_text=$(LC_ALL=C awk '
-    { sub(/\r$/, ""); eq = index($0, "="); if (!eq) next
-      key = substr($0, 1, eq - 1); gsub(/^[ \t]+|[ \t]+$/, "", key)
-      if (key !~ /^[A-Za-z_][A-Za-z0-9_]*$/) next
-      if (!(key in values)) keys[++count] = key
-      values[key] = substr($0, eq + 1)
-    }
-    END { for (i = 1; i <= count; i++) print keys[i] "=" values[keys[i]] }
-  ' "$STEAM_COMPAT_DATA_PATH/notproton.env")
-fi
-# Only settings consumed by this script enter its environment. Arbitrary names
-# are forwarded below without being able to overwrite shell variables like log.
-while IFS= read -r np_game_env_line; do
-  np_game_env_key=${np_game_env_line%%=*}
-  case "$np_game_env_key" in
-    CX_GRAPHICS_BACKEND | D3DM_* | DXMT_* | DXVK_* | FEX_* | MTL_* | ROSETTA_* | \
-    WINEDEBUG | WINEMSYNC | WINEDLLOVERRIDES | NOTPROTON_RETINA | \
-    NOTPROTON_RAW_CONTROLLERS | NOTPROTON_DISABLE_HIDRAW)
-      export "${np_game_env_line?}" ;;
-  esac
-done <<NP_GAME_ENV_SETTINGS
-$np_game_env_text
-NP_GAME_ENV_SETTINGS
 
 np_from_defaults() {
   case " $np_defaulted " in *" $1="*) return 0 ;; esac

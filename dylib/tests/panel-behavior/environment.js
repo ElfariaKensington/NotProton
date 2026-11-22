@@ -1,6 +1,7 @@
 'use strict';
-// Drive the General-tab Launch Options & Environment Variables editor, including
-// presets, list/text modes, Disable/Enable, Clear/Undo, validation, and async saves.
+// Drive General-tab Launch Options + Compatibility-tab env integration:
+// empty user-defined presets, Compatibility toggles writing to notproton.env,
+// cross-tab sync, list/text modes, Disable/Enable, Clear/Undo, validation, and concurrency.
 const assert = require('node:assert/strict');
 const { panel, launchOptions, walk, details, FORMS } = require('./harness');
 const emit = process.argv[2];
@@ -78,6 +79,24 @@ const deferred = () => {
   return { promise, resolve };
 };
 
+function hooks() {
+  const state = [], cleanups = [];
+  let at = 0;
+  return {
+    use: init => {
+      const i = at++;
+      if (!(i in state)) state[i] = init;
+      return [state[i], v => { state[i] = typeof v === 'function' ? v(state[i]) : v; }];
+    },
+    effect: fn => {
+      const i = at++;
+      if (!(i in state)) { state[i] = true; const c = fn(); if (typeof c === 'function') cleanups.push(c); }
+    },
+    reset: () => { at = 0; },
+    unmount: () => cleanups.splice(0).forEach(f => f()),
+  };
+}
+
 (async () => {
   // Compatibility tab no longer appends the old plain Environment variables section.
   for (const form of Object.keys(FORMS)) {
@@ -90,13 +109,16 @@ const deferred = () => {
 
   const reads = [], writes = [], launchWrites = [];
   const storage = new Map();
-  let stored = 'DXMT_ENABLE_NVEXT=1\nCX_GRAPHICS_BACKEND=dxmt\n', failLoad = false, failSave = false, waitSave;
+  let stored = '', failLoad = false, failSave = false, waitSave;
+  const h = hooks();
   const globals = {
     document: { documentElement: { lang: 'en' } },
     localStorage: {
       getItem: k => storage.has(k) ? storage.get(k) : null,
       setItem: (k, v) => storage.set(k, String(v)),
     },
+    MSCXUseState: h.use,
+    MSCXUseEffect: h.effect,
     MSCXRoute: async (route, id) => {
       reads.push({ route, id });
       if (failLoad) throw Error('offline');
@@ -111,6 +133,58 @@ const deferred = () => {
     },
   };
 
+  // 1. Compatibility tab toggles/dropdowns/plugins write to notproton.env, NOT strLaunchOptions,
+  //    and sync directly with the General-tab Launch Options env card.
+  const FEATS = JSON.stringify([
+    { k: 'NOTPROTON_TRUEHDR', l: 'TrueHDR', on: '1', off: '', dep: '', d: '' },
+  ]).replace(/"(\w+)":/g, '$1:');
+  const compat = panel(emit, 'statement', globals, { feats: FEATS });
+  const renderCompat = (id = 480, opts = '') => {
+    h.reset();
+    return walk(compat.render({ details: details(opts, { unAppID: id }) }));
+  };
+
+  let cNodes = renderCompat(480, '%command% -param');
+  await settle();
+  cNodes = renderCompat(480, '%command% -param');
+
+  cNodes.find(x => x.props && x.props.label === 'MSync').props.onChange(true);
+  await settle();
+  cNodes = renderCompat(480, '%command% -param');
+  cNodes.find(x => x.props && x.props.label === 'DLSS').props.onChange(true);
+  await settle();
+  assert.match(stored, /D3DM_ENABLE_METALFX=1/, 'Automatic DLSS writes D3DM_ENABLE_METALFX to env');
+  cNodes = renderCompat(480, '%command% -param');
+  cNodes.find(x => x.props && x.props.label === 'TrueHDR').props.onChange(true);
+  await settle();
+  cNodes = renderCompat(480, '%command% -param');
+  cNodes.find(x => x.type === 'Dropdown' && (x.props.rgOptions || []).some(o => o.data === 'dxmt'))
+    .props.onChange({ data: 'dxmt' });
+  await settle();
+  assert.ok(!/D3DM_ENABLE_METALFX=/.test(stored), 'switching to dxmt clears D3DM_ENABLE_METALFX from env');
+  cNodes = renderCompat(480, '%command% -param');
+  cNodes.find(x => x.props && x.props.label === 'DLSS').props.onChange(true);
+  await settle();
+
+  assert.deepEqual(compat.written, [], 'Compatibility options never write to SetAppLaunchOptions');
+  assert.match(stored, /WINEMSYNC=1/);
+  assert.match(stored, /DXMT_ENABLE_NVEXT=1/);
+  assert.match(stored, /NOTPROTON_TRUEHDR=1/);
+  assert.match(stored, /CX_GRAPHICS_BACKEND=dxmt/);
+
+  // Legacy env vars in strLaunchOptions are stripped when toggled in Compatibility tab.
+  cNodes = renderCompat(480, 'WINEMSYNC=1 %command% -param');
+  cNodes.find(x => x.props && x.props.label === 'MSync').props.onChange(false);
+  await settle();
+  assert.equal(compat.written.at(-1).opts, '%command% -param', 'legacy WINEMSYNC stripped from launch args');
+  assert.ok(!/WINEMSYNC=/.test(stored));
+
+  // Turn MSync back on for General tab inspection.
+  cNodes = renderCompat(480, '%command% -param');
+  cNodes.find(x => x.props && x.props.label === 'MSync').props.onChange(true);
+  await settle();
+
+  // 2. General tab Launch Options reads those exact env vars into the flat card & starts with empty presets.
   const LaunchOpts = launchOptions(emit, globals);
   const doc = new Doc();
   const root = new Element('div', doc);
@@ -153,20 +227,27 @@ const deferred = () => {
   };
 
   let ui = mount(480, '%command% -param');
-  assert.equal(ui.textArea.disabled, true);
+  await settle();
+  let rows = ui.envBody.findAll(el => el.className === 'NPLOEnvRow');
+  const keysInUI = rows.map(r => r.find(el => el.className === 'NPLOEnvKey').value);
+  assert.deepEqual(keysInUI, ['NOTPROTON_TRUEHDR', 'CX_GRAPHICS_BACKEND', 'DXMT_ENABLE_NVEXT', 'WINEMSYNC']);
   assert.equal(ui.argsInput.value, '%command% -param');
-  await settle();
-  assert.equal(ui.textArea.disabled, false);
-  assert.equal(ui.envBody.findAll(el => el.className === 'NPLOEnvRow').length, 2);
 
-  // Re-render for the same appId preserves without refetching and syncs external args.
-  mount(480, '%command% -param');
-  await settle();
-  assert.equal(reads.length, 1, 'rerender preserves without refetching');
-  mount(480, '%command% -external');
-  assert.equal(ui.argsInput.value, '%command% -external', 'external strLaunchOptions update applies');
+  // Presets start completely empty until defined by the user.
+  assert.equal(ui.presetLabel.textContent, 'Preset: None');
+  ui.presetBtn.onclick({ stopPropagation() {} });
+  assert.equal(ui.popover.hidden, false);
+  assert.equal(ui.presetList.children[0].textContent, 'No saved presets');
+  assert.ok(!ui.presetList.find(el => el.textContent === 'Reset defaults'), 'no hardcoded default presets');
 
-  // Typing launch arguments calls setValue without touching notproton.env.
+  // Save a user preset, verify it persists and matches, then delete it back to empty.
+  ui.addPresetBtn.onclick({ stopPropagation() {} });
+  ui.presetInput.value = 'My DXMT Setup';
+  ui.presetSaveBtn.onclick({ stopPropagation() {} });
+  assert.equal(ui.presetLabel.textContent, 'Preset: My DXMT Setup');
+  assert.ok(storage.get('NotProtonLaunchPresets_v1').includes('My DXMT Setup'));
+
+  // Typing launch arguments calls setValue without touching notproton.env, switches label to Custom.
   const prevEnvWrites = writes.length;
   ui.argsInput.value = '%command% -novid';
   ui.argsInput.oninput();
@@ -174,38 +255,52 @@ const deferred = () => {
   assert.equal(writes.length, prevEnvWrites, 'typing args does not write notproton.env');
   assert.equal(ui.presetLabel.textContent, 'Preset: Custom');
 
+  // Applying user preset restores its args and env.
+  ui.presetBtn.onclick({ stopPropagation() {} });
+  ui.presetList.find(el => el.className && el.className.includes('NPLOPresetPick')).onclick({ stopPropagation() {} });
+  await settle();
+  assert.equal(ui.argsInput.value, '%command% -param');
+  assert.equal(ui.presetLabel.textContent, 'Preset: My DXMT Setup');
+
+  // Deleting the user preset leaves presets empty again.
+  ui.presetBtn.onclick({ stopPropagation() {} });
+  ui.presetList.find(el => el.className === 'NPLOPresetDel').onclick({ stopPropagation() {} });
+  assert.equal(ui.presetList.children[0].textContent, 'No saved presets');
+  assert.equal(ui.presetLabel.textContent, 'Preset: None');
+  doc.dispatchClick(root);
+  assert.equal(ui.popover.hidden, true);
+
   // Adding, editing, and removing a variable in list mode.
   const prevLaunchWrites = launchWrites.length;
   ui.addVarBtn.onclick({ stopPropagation() {} });
-  let rows = ui.envBody.findAll(el => el.className === 'NPLOEnvRow');
-  assert.equal(rows.length, 3);
-  const k3 = rows[2].find(el => el.className === 'NPLOEnvKey');
-  const v3 = rows[2].find(el => el.className === 'NPLOEnvVal');
-  assert.equal(doc.activeElement, k3, 'adding a variable focuses its name input');
-  k3.value = 'UNICODE_VAR';
-  k3.oninput();
-  v3.value = 'Türkçe 日本語';
-  v3.oninput();
-  v3.onblur();
+  rows = ui.envBody.findAll(el => el.className === 'NPLOEnvRow');
+  const kNew = rows.at(-1).find(el => el.className === 'NPLOEnvKey');
+  const vNew = rows.at(-1).find(el => el.className === 'NPLOEnvVal');
+  assert.equal(doc.activeElement, kNew, 'adding a variable focuses its name input');
+  kNew.value = 'UNICODE_VAR';
+  kNew.oninput();
+  vNew.value = 'Türkçe 日本語';
+  vNew.oninput();
+  vNew.onblur();
   await settle();
   assert.match(stored, /UNICODE_VAR=Türkçe 日本語/);
   assert.equal(launchWrites.length, prevLaunchWrites, 'editing env never calls SetAppLaunchOptions');
 
   // Invalid variable name is rejected before transport.
   const saveCountBeforeBad = writes.length;
-  k3.value = 'INVALID KEY';
-  k3.oninput();
-  k3.onblur();
+  kNew.value = 'INVALID KEY';
+  kNew.oninput();
+  kNew.onblur();
   await settle();
   assert.equal(writes.length, saveCountBeforeBad, 'invalid key never reaches transport');
   assert.match(ui.statusMsg.textContent, /Not saved/);
 
   // Fix key back and test Edit as text -> Edit as list.
-  k3.value = 'LITERAL_CMD';
-  k3.oninput();
-  v3.value = '$(touch nope) "quoted"';
-  v3.oninput();
-  v3.onblur();
+  kNew.value = 'LITERAL_CMD';
+  kNew.oninput();
+  vNew.value = '$(touch nope) "quoted"';
+  vNew.oninput();
+  vNew.onblur();
   await settle();
   assert.match(stored, /LITERAL_CMD=\$\(touch nope\) "quoted"/);
 
@@ -214,11 +309,16 @@ const deferred = () => {
   assert.equal(ui.envBody.hidden, true);
   assert.equal(ui.addVarBtn.hidden, true);
   assert.equal(ui.modeBtn.textContent, 'Edit as list');
-  ui.textArea.value = '# keep note\nHELLO=two words=literal\nEMPTY=';
+  ui.textArea.value = '# keep note\nHELLO=two words=literal\nWINEMSYNC=1';
   ui.textArea.oninput();
   ui.textArea.onblur();
   await settle();
-  assert.equal(stored, '# keep note\nHELLO=two words=literal\nEMPTY=');
+  assert.equal(stored, '# keep note\nHELLO=two words=literal\nWINEMSYNC=1');
+
+  // Compatibility tab reads the updated env immediately.
+  cNodes = renderCompat(480, '%command% -param');
+  assert.equal(cNodes.find(x => x.props && x.props.label === 'MSync').props.checked, true);
+  assert.equal(cNodes.find(x => x.props && x.props.label === 'TrueHDR').props.checked, false);
 
   ui.modeBtn.onclick();
   await settle();
@@ -232,41 +332,23 @@ const deferred = () => {
   assert.equal(ui.bypassBtn.textContent, 'Enable');
   assert.match(ui.envBody.className, /bypassed/);
   assert.ok(stored.startsWith('# notproton-disabled\n'), 'disabled state persisted via comment header');
+  cNodes = renderCompat(480, '%command% -param');
+  assert.equal(cNodes.find(x => x.props && x.props.label === 'MSync').props.checked, false, 'disabled env reads off in Compatibility');
 
-  // Reloading preserves disabled state.
+  // Reloading another app preserves disabled state from stored text.
   ui = mount(481, '');
   await settle();
   assert.equal(ui.bypassBtn.textContent, 'Enable');
   assert.match(ui.envBody.className, /bypassed/);
-  assert.equal(ui.envBody.findAll(el => el.className === 'NPLOEnvRow').length, 2);
 
   ui.bypassBtn.onclick();
   await settle();
   assert.equal(ui.bypassBtn.textContent, 'Disable');
-  assert.equal(stored, '# keep note\nHELLO=two words=literal\nEMPTY=');
-
-  // Presets: switch to DXMT Metal, save custom preset, delete preset, reset defaults.
-  ui.presetBtn.onclick({ stopPropagation() {} });
-  assert.equal(ui.popover.hidden, false);
-  const dxmtPick = ui.presetList.find(el => el.className && el.className.includes('NPLOPresetPick') && el.textContent === 'DXMT Metal');
-  dxmtPick.onclick({ stopPropagation() {} });
-  await settle();
-  assert.equal(ui.popover.hidden, true);
-  assert.equal(ui.presetLabel.textContent, 'Preset: DXMT Metal');
-  assert.equal(stored, 'DXMT_ENABLE_NVEXT=1\nCX_GRAPHICS_BACKEND=dxmt');
-
-  // Save custom preset.
-  ui.argsInput.value = '%command% -custom';
-  ui.argsInput.oninput();
-  ui.presetBtn.onclick({ stopPropagation() {} });
-  ui.addPresetBtn.onclick({ stopPropagation() {} });
-  assert.equal(ui.presetForm.hidden, false);
-  ui.presetInput.value = 'My Preset';
-  ui.presetSaveBtn.onclick({ stopPropagation() {} });
-  assert.equal(ui.presetLabel.textContent, 'Preset: My Preset');
-  assert.ok(storage.get('NotProtonLaunchPresets_v1').includes('My Preset'));
+  assert.equal(stored, '# keep note\nHELLO=two words=literal\nWINEMSYNC=1');
 
   // Clear and Undo clear.
+  ui.argsInput.value = '%command% -windowed';
+  ui.argsInput.oninput();
   ui.clearBtn.onclick();
   await settle();
   assert.equal(ui.argsInput.value, '');
@@ -274,23 +356,9 @@ const deferred = () => {
   assert.equal(ui.undoBtn.hidden, false);
   ui.undoBtn.onclick();
   await settle();
-  assert.equal(ui.argsInput.value, '%command% -custom');
-  assert.equal(stored, 'DXMT_ENABLE_NVEXT=1\nCX_GRAPHICS_BACKEND=dxmt');
+  assert.equal(ui.argsInput.value, '%command% -windowed');
+  assert.equal(stored, '# keep note\nHELLO=two words=literal\nWINEMSYNC=1');
   assert.equal(ui.undoBtn.hidden, true);
-
-  // Delete all presets -> shows Reset defaults -> clicking restores DXMT Metal.
-  ui.presetBtn.onclick({ stopPropagation() {} });
-  while (true) {
-    const del = ui.presetList.find(el => el.className === 'NPLOPresetDel');
-    if (!del) break;
-    del.onclick({ stopPropagation() {} });
-  }
-  const resetBtn = ui.presetList.find(el => el.textContent === 'Reset defaults');
-  assert.ok(resetBtn, 'deleting all presets shows Reset defaults');
-  resetBtn.onclick({ stopPropagation() {} });
-  assert.ok(ui.presetList.find(el => el.textContent === 'DXMT Metal'), 'Reset defaults restores presets');
-  doc.dispatchClick(root);
-  assert.equal(ui.popover.hidden, true, 'clicking outside closes preset popover');
 
   // Save failure + Retry and concurrent revert ordering.
   failSave = true;
@@ -320,7 +388,7 @@ const deferred = () => {
   await settle();
   assert.equal(stored, 'RETRY=yes', 'reverting while a save is pending still writes the revert');
 
-  // Load failure + Retry.
+  // Load failure + Retry on a fresh appId.
   failLoad = true;
   ui = mount(482, '');
   await settle();
@@ -332,5 +400,16 @@ const deferred = () => {
   assert.equal(ui.textArea.disabled, false);
   assert.equal(ui.retryBtn.hidden, true);
 
-  console.log('==> launch options & environment editor: presets, list/text modes, disable, clear/undo, validation, retry and concurrency pass');
+  // Third-party tools (!ours) still fall back to strLaunchOptions.
+  const foreign = panel(emit, 'statement', globals, {
+    feats: JSON.stringify([{ k: 'NOTPROTON_HUD', l: 'Hud', on: '1', off: '', dep: '', d: '', rq: '/lib/libhud.dylib', ev: ['HUD=1'] }]).replace(/"(\w+)":/g, '$1:'),
+    ourTools: [['notproton', '27.0']],
+  });
+  h.reset();
+  const fNodes = walk(foreign.render({ details: details('', { unAppID: 483, strCompatToolName: 'crossover-25' }) }));
+  fNodes.find(x => x.props && x.props.label === 'Hud').props.onChange(true);
+  assert.equal(foreign.written[0].opts, 'env DYLD_INSERT_LIBRARIES=/lib/libhud.dylib HUD=1 %command%');
+
+  h.unmount();
+  console.log('==> unified env store, empty presets, compatibility sync, list/text modes, disable, clear/undo, retry and concurrency pass');
 })().catch(e => { console.error(e); process.exitCode = 1; });

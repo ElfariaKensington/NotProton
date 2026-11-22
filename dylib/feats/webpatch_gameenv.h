@@ -1,4 +1,4 @@
-// General-tab Launch Options with presets and prefix-local environment variables.
+// Shared prefix-local env store and General-tab Launch Options UI.
 #ifndef NOTPROTON_WEBPATCH_GAMEENV_H
 #define NOTPROTON_WEBPATCH_GAMEENV_H
 
@@ -64,34 +64,14 @@
     ".NPLOLink:disabled{opacity:.35;pointer-events:none;cursor:default}" \
     ".NPLOLink[hidden]{display:none}"
 
-#define NP_CX_LAUNCH_OPTIONS(RT, BARREL) \
-    "((react,ui)=>{" \
-    " const STORE_KEY='NotProtonLaunchPresets_v1';" \
+#define NP_ENV_STORE_INIT \
+    "(globalThis.MSCXEnvStore||(globalThis.MSCXEnvStore=(()=>{" \
     " const DISABLE_HDR='# notproton-disabled';" \
-    " const DEFAULTS=()=>({" \
-    "  dxmt:{label:'DXMT Metal',args:'',vars:[{key:'DXMT_ENABLE_NVEXT',val:'1'},{key:'CX_GRAPHICS_BACKEND',val:'dxmt'}]}," \
-    "  debug:{label:'Windowed Debug',args:'%command% -windowed -w 1280 -h 720 -console',vars:[{key:'DXMT_HUD',val:'fps,devinfo,memory'},{key:'MTL_HUD_ENABLED',val:'1'}]}," \
-    "  vanilla:{label:'Vanilla (None)',args:'',vars:[]}" \
-    " });" \
-    " const clone=x=>JSON.parse(JSON.stringify(x));" \
-    " const loadPresets=()=>{" \
-    "  try{" \
-    "   const raw=globalThis.localStorage?.getItem(STORE_KEY);" \
-    "   if(!raw)return DEFAULTS();" \
-    "   const parsed=JSON.parse(raw);" \
-    "   if(!parsed||typeof parsed!=='object'||Array.isArray(parsed))return DEFAULTS();" \
-    "   const out={};" \
-    "   for(const k of Object.keys(parsed)){" \
-    "    const p=parsed[k];" \
-    "    if(!p||typeof p!=='object'||typeof p.label!=='string'||!Array.isArray(p.vars))continue;" \
-    "    out[k]={label:p.label,args:typeof p.args==='string'?p.args:'',vars:p.vars.filter(v=>v&&typeof v.key==='string').map(v=>({key:v.key,val:typeof v.val==='string'?v.val:''}))};" \
-    "   }" \
-    "   return out;" \
-    "  }catch(_){return DEFAULTS()}" \
-    " };" \
-    " const savePresets=p=>{try{globalThis.localStorage?.setItem(STORE_KEY,JSON.stringify(p))}catch(_){}};" \
     " const keyOk=k=>/^[A-Za-z_][A-Za-z0-9_]*$/.test(k);" \
-    " const parseText=(raw)=>{" \
+    " const activeVars=vars=>vars.filter(v=>v.key.trim()!==''||v.val!=='').map(v=>({key:v.key.trim(),val:v.val}));" \
+    " const validateVars=vars=>vars.every(v=>{const k=v.key.trim();return(!k&&v.val==='')||(k&&keyOk(k))});" \
+    " const parseLinesValid=raw=>String(raw||'').split(/\\r?\\n/).every(l=>!l.trim()||l.trim().startsWith('#')||/^[ \\t]*[A-Za-z_][A-Za-z0-9_]*[ \\t]*=/.test(l));" \
+    " const parseText=raw=>{" \
     "  let lines=String(raw||'').split(/\\r?\\n/),disabled=false;" \
     "  if(lines.length&&lines[0].trim()===DISABLE_HDR){" \
     "   disabled=true;" \
@@ -99,24 +79,13 @@
     "  }" \
     "  const vars=[],comments=[];" \
     "  for(const l of lines){" \
-    "   const t=l.trim();" \
-    "   if(!t)continue;" \
+    "   const t=l.trim();if(!t)continue;" \
     "   if(t.startsWith('#')){comments.push(l);continue}" \
     "   const eq=l.indexOf('=');" \
     "   if(eq===-1)vars.push({key:t,val:''});" \
     "   else vars.push({key:l.slice(0,eq).trim(),val:l.slice(eq+1)});" \
     "  }" \
     "  return{vars,disabled,comments};" \
-    " };" \
-    " const parseLinesValid=raw=>String(raw||'').split(/\\r?\\n/).every(l=>!l.trim()||l.trim().startsWith('#')||/^[ \\t]*[A-Za-z_][A-Za-z0-9_]*[ \\t]*=/.test(l));" \
-    " const activeVars=vars=>vars.filter(v=>v.key.trim()!==''||v.val!=='').map(v=>({key:v.key.trim(),val:v.val}));" \
-    " const validateVars=vars=>{" \
-    "  for(const v of vars){" \
-    "   const k=v.key.trim();" \
-    "   if(!k&&v.val==='')continue;" \
-    "   if(!k||!keyOk(k))return false;" \
-    "  }" \
-    "  return true;" \
     " };" \
     " const serializeEnv=(vars,disabled,comments)=>{" \
     "  const lines=[...(comments||[]),...activeVars(vars).map(v=>v.key+'='+v.val)];" \
@@ -125,7 +94,106 @@
     "  return lines.join('\\n');" \
     " };" \
     " const serializeText=(vars,comments)=>[...(comments||[]),...activeVars(vars).map(v=>v.key+'='+v.val)].join('\\n');" \
-    " const matchPreset=(presets,args,vars,disabled,comments)=>{" \
+    " const entries=new Map(),queues=globalThis.MSCXEnvWrites||(globalThis.MSCXEnvWrites=new Map);" \
+    " let nextRow=1;" \
+    " const getEntry=id=>{" \
+    "  let e=entries.get(id);" \
+    "  if(!e){e={id,loaded:false,loading:false,loadErr:false,error:'',savedRaw:'',vars:[],comments:[],disabled:false,dirty:false,revision:0,pendingPairs:[],listeners:new Set()};entries.set(id,e)}" \
+    "  return e;" \
+    " };" \
+    " const emit=id=>{const e=entries.get(id);if(e)e.listeners.forEach(fn=>{try{fn(e)}catch(_){}})};" \
+    " const applyPairsTo=(e,pairs)=>{" \
+    "  for(const p of pairs){" \
+    "   const k=p[0],v=p[1];" \
+    "   let replaced=false;" \
+    "   e.vars=e.vars.filter(r=>{" \
+    "    if(r.key.trim()!==k)return true;" \
+    "    if(v!==''&&!replaced){r.key=k;r.val=String(v);replaced=true;return true}" \
+    "    return false;" \
+    "   });" \
+    "   if(v!==''&&!replaced)e.vars.push({id:nextRow++,key:k,val:String(v)});" \
+    "  }" \
+    "  if(!e.vars.length)e.disabled=false;" \
+    " };" \
+    " const save=(id,rawOverride)=>{" \
+    "  const e=getEntry(id);" \
+    "  if(!e.loaded)return Promise.resolve(false);" \
+    "  const payload=rawOverride!==undefined?rawOverride:serializeEnv(e.vars,e.disabled,e.comments);" \
+    "  if(rawOverride===undefined&&!validateVars(e.vars)){e.error='Not saved. Use valid KEY=VALUE names (letters, digits, underscores).';emit(id);return Promise.resolve(false)}" \
+    "  if(payload.includes('\\0')||new TextEncoder().encode(payload).length>65536){e.error='Not saved. Environment exceeds 64 KiB limit.';emit(id);return Promise.resolve(false)}" \
+    "  if(payload===e.savedRaw&&!queues.has(id)){e.dirty=false;e.error='';emit(id);return Promise.resolve(true)}" \
+    "  if(typeof globalThis.MSCXSpecifyRoute!=='function'){return Promise.resolve(false)}" \
+    "  const rev=e.revision;" \
+    "  e.dirty=false;e.error='';emit(id);" \
+    "  const pending=Promise.resolve(queues.get(id)).catch(()=>{}).then(()=>globalThis.MSCXSpecifyRoute('NotProton.SetGameEnvironment#1',id,payload)).then(ans=>{" \
+    "   if(!ans||ans.GetEResult()!==1)throw Error('save');" \
+    "   e.savedRaw=payload;" \
+    "   if(rev===e.revision){e.error='';e.dirty=false}" \
+    "   emit(id);return true;" \
+    "  }).catch(()=>{" \
+    "   if(rev===e.revision){e.dirty=true;e.error='Could not save environment variables.'}" \
+    "   emit(id);return false;" \
+    "  });" \
+    "  queues.set(id,pending);pending.finally(()=>{if(queues.get(id)===pending)queues.delete(id)});" \
+    "  return pending;" \
+    " };" \
+    " const load=id=>{" \
+    "  const e=getEntry(id);" \
+    "  if(e.loading)return;" \
+    "  if(typeof globalThis.MSCXRoute!=='function'){e.loaded=true;e.loading=false;e.loadErr=false;e.error='';emit(id);return}" \
+    "  e.loading=true;e.loadErr=false;e.error='';emit(id);" \
+    "  Promise.resolve(queues.get(id)).catch(()=>{}).then(()=>globalThis.MSCXRoute('NotProton.GetGameEnvironment#1',id)).then(txt=>{" \
+    "   e.savedRaw=txt||'';" \
+    "   if(!e.dirty){" \
+    "    const p=parseText(e.savedRaw);" \
+    "    e.vars=p.vars.map(v=>({id:nextRow++,key:v.key,val:v.val}));" \
+    "    e.comments=p.comments;e.disabled=p.disabled;" \
+    "   }" \
+    "   e.loaded=true;e.loading=false;e.loadErr=false;e.error='';" \
+    "   if(e.pendingPairs.length){const ps=e.pendingPairs.splice(0);applyPairsTo(e,ps);e.revision++;e.dirty=true;emit(id);save(id);return}" \
+    "   emit(id);" \
+    "  }).catch(()=>{" \
+    "   e.loaded=false;e.loading=false;e.loadErr=true;e.error='Could not load environment variables.';emit(id);" \
+    "  });" \
+    " };" \
+    " const ensure=id=>{const e=getEntry(id);if(!e.loaded&&!e.loading&&!e.loadErr)load(id);return e};" \
+    " const subscribe=(id,fn)=>{const e=ensure(id);e.listeners.add(fn);return()=>e.listeners.delete(fn)};" \
+    " const getMap=id=>{" \
+    "  const e=ensure(id),m=new Map();" \
+    "  if(!e.disabled)for(const v of activeVars(e.vars))m.set(v.key,v.val);" \
+    "  return m;" \
+    " };" \
+    " const setPairs=(id,pairs)=>{" \
+    "  if(!pairs||!pairs.length)return;" \
+    "  const e=ensure(id);" \
+    "  applyPairsTo(e,pairs);e.revision++;e.dirty=true;emit(id);" \
+    "  if(e.loaded)save(id);else e.pendingPairs.push(...pairs);" \
+    " };" \
+    " return{ensure,load,save,subscribe,getEntry,getMap,setPairs,emit,allocId:()=>nextRow++,keyOk,activeVars,validateVars,parseLinesValid,parseText,serializeEnv,serializeText};" \
+    "})()))"
+
+#define NP_CX_LAUNCH_OPTIONS(RT, BARREL) \
+    "((react,ui)=>{" \
+    " const STORE_KEY='NotProtonLaunchPresets_v1';" \
+    " const clone=x=>JSON.parse(JSON.stringify(x));" \
+    " const getStore=()=>" NP_ENV_STORE_INIT ";" \
+    " const loadPresets=()=>{" \
+    "  try{" \
+    "   const raw=globalThis.localStorage?.getItem(STORE_KEY);" \
+    "   if(!raw)return {};" \
+    "   const parsed=JSON.parse(raw);" \
+    "   if(!parsed||typeof parsed!=='object'||Array.isArray(parsed))return {};" \
+    "   const out={};" \
+    "   for(const k of Object.keys(parsed)){" \
+    "    const p=parsed[k];" \
+    "    if(!p||typeof p!=='object'||typeof p.label!=='string'||!Array.isArray(p.vars))continue;" \
+    "    out[k]={label:p.label,args:typeof p.args==='string'?p.args:'',vars:p.vars.filter(v=>v&&typeof v.key==='string').map(v=>({key:v.key,val:typeof v.val==='string'?v.val:''}))};" \
+    "   }" \
+    "   return out;" \
+    "  }catch(_){return {}}" \
+    " };" \
+    " const savePresets=p=>{try{globalThis.localStorage?.setItem(STORE_KEY,JSON.stringify(p))}catch(_){}};" \
+    " const matchPreset=(presets,args,vars,disabled,comments,activeVars)=>{" \
     "  if(disabled||(comments&&comments.length))return 'custom';" \
     "  const av=activeVars(vars),a=args||'';" \
     "  for(const k of Object.keys(presets)){" \
@@ -142,7 +210,7 @@
     " const autoResize=el=>{if(!el||!el.style)return;el.style.height='auto';el.style.height=el.scrollHeight+'px'};" \
     " const attach=(root,props)=>{" \
     "  if(root.npLO){root.npLO.sync(props);return}" \
-    "  const doc=root.ownerDocument;" \
+    "  const S=getStore(),doc=root.ownerDocument;" \
     "  const mk=(tag,cls,txt)=>{const n=doc.createElement(tag);if(cls)n.className=cls;if(txt!=null)n.textContent=txt;return n};" \
     "  const svg=(vb,w,h,body)=>{" \
     "   if(doc.createElementNS){" \
@@ -157,7 +225,7 @@
     "  const title=mk('h3','NPLOTitle',props.title||'Launch Options');" \
     "  const presetWrap=mk('div','NPLOPresetWrap');" \
     "  const presetBtn=mk('button','NPLOPresetBtn');presetBtn.type='button';" \
-    "  const presetLabel=mk('span','','Preset: Custom');" \
+    "  const presetLabel=mk('span','','Preset: None');" \
     "  const chevron=svg('0 0 24 24','14','14','<polyline points=\"6 9 12 15 18 9\"/>');" \
     "  if(chevron.className!==undefined&&typeof chevron.className==='string')chevron.className='NPLOPresetChevron';" \
     "  else if(chevron.setAttribute)chevron.setAttribute('class','NPLOPresetChevron');" \
@@ -203,10 +271,9 @@
     "  foot.append(footL,footR);" \
     "  card.append(envBody,textWrap,statusRow,foot);" \
     "  root.replaceChildren(header,argsBox,card);" \
-    "  const queues=globalThis.MSCXEnvWrites||(globalThis.MSCXEnvWrites=new Map);" \
     "  let cur=props,appId=props.appId,lastPropVal=props.value||'',presets=loadPresets(),activePreset='custom';" \
-    "  let vars=[],comments=[],disabled=false,mode='list',loaded=false,dirty=false,revision=0,savedRaw='';" \
-    "  let echo=[],valEls=[],nextRow=1,undoSnap=null,undoTimer=null,saveTimer=null,stopped=false,focusNewRow=false;" \
+    "  let mode='list',echo=[],valEls=[],undoSnap=null,undoTimer=null,saveTimer=null,stopped=false,focusNewRow=false,unsub=null,selfEdit=false;" \
+    "  const E=()=>S.getEntry(appId);" \
     "  const live=()=>!stopped&&root.isConnected&&root.firstChild===header;" \
     "  const setStatus=(msg,err,canRetry)=>{" \
     "   if(!live())return;" \
@@ -231,15 +298,11 @@
     "   argsInput.value=val;autoResize(argsInput);echo.push(val);cur.setValue?.(val);" \
     "  };" \
     "  const updatePresetUI=()=>{" \
-    "   activePreset=matchPreset(presets,argsInput.value,vars,disabled,comments);" \
-    "   presetLabel.textContent='Preset: '+(activePreset!=='custom'&&presets[activePreset]?presets[activePreset].label:'Custom');" \
-    "   const keys=Object.keys(presets);" \
+    "   const e=E(),keys=Object.keys(presets);" \
+    "   activePreset=matchPreset(presets,argsInput.value,e.vars,e.disabled,e.comments,S.activeVars);" \
+    "   presetLabel.textContent='Preset: '+(activePreset!=='custom'&&presets[activePreset]?presets[activePreset].label:(keys.length?'Custom':'None'));" \
     "   if(!keys.length){" \
-    "    const box=mk('div','NPLOPresetEmpty');" \
-    "    const msg=mk('div','','No saved presets');msg.style.marginBottom='6px';" \
-    "    const rst=mk('button','NPLOLink','Reset defaults');rst.type='button';" \
-    "    rst.onclick=ev=>{ev.stopPropagation();presets=DEFAULTS();savePresets(presets);updatePresetUI()};" \
-    "    box.append(msg,rst);presetList.replaceChildren(box);return;" \
+    "    presetList.replaceChildren(mk('div','NPLOPresetEmpty','No saved presets'));return;" \
     "   }" \
     "   presetList.replaceChildren(...keys.map(k=>{" \
     "    const row=mk('div','NPLOPresetItem');" \
@@ -253,66 +316,46 @@
     "   }));" \
     "  };" \
     "  const updateFooter=()=>{" \
-    "   const hasArgs=argsInput.value.trim().length>0;" \
-    "   const hasVars=vars.length>0;" \
+    "   const e=E(),hasArgs=argsInput.value.trim().length>0,hasVars=e.vars.length>0;" \
     "   addVarBtn.hidden=mode==='text';" \
     "   modeBtn.textContent=mode==='text'?'Edit as list':'Edit as text';" \
-    "   clearBtn.disabled=!hasArgs&&!hasVars&&!comments.length;" \
-    "   bypassBtn.disabled=!loaded||!hasVars;" \
-    "   bypassBtn.textContent=disabled?'Enable':'Disable';" \
-    "   envBody.className=disabled?'NPLOEnvBody bypassed':'NPLOEnvBody';" \
-    "   textWrap.className=disabled?'NPLOEnvTextWrap bypassed':'NPLOEnvTextWrap';" \
+    "   clearBtn.disabled=!hasArgs&&!hasVars&&!e.comments.length;" \
+    "   bypassBtn.disabled=!e.loaded||!hasVars;" \
+    "   bypassBtn.textContent=e.disabled?'Enable':'Disable';" \
+    "   envBody.className=e.disabled?'NPLOEnvBody bypassed':'NPLOEnvBody';" \
+    "   textWrap.className=e.disabled?'NPLOEnvTextWrap bypassed':'NPLOEnvTextWrap';" \
     "   envBody.hidden=mode==='text';" \
     "   textWrap.hidden=mode!=='text';" \
-    "   addVarBtn.disabled=!loaded;" \
-    "   modeBtn.disabled=!loaded;" \
-    "   textArea.disabled=!loaded;" \
+    "   addVarBtn.disabled=!e.loaded;" \
+    "   modeBtn.disabled=!e.loaded;" \
+    "   textArea.disabled=!e.loaded;" \
     "  };" \
     "  const saveEnvNow=()=>{" \
     "   if(saveTimer){clearTimeout(saveTimer);saveTimer=null}" \
-    "   if(!loaded)return;" \
-    "   let payload='';" \
+    "   const e=E();if(!e.loaded)return;" \
     "   if(mode==='text'){" \
     "    const raw=textArea.value;" \
-    "    if(!parseLinesValid(raw)||raw.includes('\\0')||new TextEncoder().encode(raw).length>65536){" \
+    "    if(!S.parseLinesValid(raw)||raw.includes('\\0')||new TextEncoder().encode(raw).length>65536){" \
     "     setStatus('Not saved. Use KEY=VALUE on each line (maximum 64 KiB).',true,false);return;" \
     "    }" \
-    "    const p=parseText(raw);vars=p.vars.map(v=>({id:nextRow++,key:v.key,val:v.val}));comments=p.comments;" \
-    "    payload=serializeEnv(vars,disabled,comments);" \
-    "   }else{" \
-    "    if(!validateVars(vars)){" \
-    "     setStatus('Not saved. Use valid KEY=VALUE names (letters, digits, underscores).',true,false);return;" \
-    "    }" \
-    "    payload=serializeEnv(vars,disabled,comments);" \
-    "    if(payload.includes('\\0')||new TextEncoder().encode(payload).length>65536){" \
-    "     setStatus('Not saved. Environment exceeds 64 KiB limit.',true,false);return;" \
-    "    }" \
+    "    const p=S.parseText(raw);e.vars=p.vars.map(v=>({id:S.allocId(),key:v.key,val:v.val}));e.comments=p.comments;" \
     "   }" \
-    "   if(payload===savedRaw&&!queues.has(appId)){dirty=false;setStatus('',false,false);return}" \
-    "   if(typeof globalThis.MSCXSpecifyRoute!=='function'){return}" \
-    "   const id=appId,rev=revision;" \
-    "   dirty=false;" \
-    "   setStatus('',false,false);" \
-    "   const pending=Promise.resolve(queues.get(id)).catch(()=>{}).then(()=>globalThis.MSCXSpecifyRoute('NotProton.SetGameEnvironment#1',id,payload)).then(ans=>{" \
-    "    if(!ans||ans.GetEResult()!==1)throw Error('save');" \
-    "    if(id===appId){savedRaw=payload;if(rev===revision)setStatus('',false,false)}" \
-    "   }).catch(()=>{" \
-    "    if(id===appId&&rev===revision){dirty=true;setStatus('Could not save environment variables.',true,true)}" \
-    "   });" \
-    "   queues.set(id,pending);pending.finally(()=>{if(queues.get(id)===pending)queues.delete(id)});" \
+    "   selfEdit=true;" \
+    "   S.save(appId).finally(()=>{selfEdit=false});" \
     "  };" \
     "  const scheduleSave=()=>{" \
-    "   revision++;dirty=true;" \
+    "   const e=E();e.revision++;e.dirty=true;" \
     "   if(saveTimer)clearTimeout(saveTimer);" \
     "   saveTimer=setTimeout(()=>saveEnvNow(),350);" \
     "  };" \
     "  const renderList=()=>{" \
+    "   const e=E();" \
     "   valEls=[];" \
-    "   if(!vars.length){" \
+    "   if(!e.vars.length){" \
     "    envBody.replaceChildren(mk('div','NPLOEnvEmpty','No environment variables configured.'));" \
     "   }else{" \
     "    let lastKeyEl=null;" \
-    "    const rows=vars.map((item)=>{" \
+    "    const rows=e.vars.map(item=>{" \
     "     const row=mk('div','NPLOEnvRow');" \
     "     const fields=mk('div','NPLOEnvFields');" \
     "     const kIn=mk('input','NPLOEnvKey');kIn.type='text';kIn.spellcheck=false;" \
@@ -326,7 +369,7 @@
     "     kIn.onblur=()=>saveEnvNow();" \
     "     vIn.onblur=()=>saveEnvNow();" \
     "     const del=mk('button','NPLOEnvDel','\\u00d7');del.type='button';del.title='Remove variable';" \
-    "     del.onclick=()=>{vars=vars.filter(x=>x.id!==item.id);if(!vars.length)disabled=false;revision++;dirty=true;renderList();updatePresetUI();updateFooter();saveEnvNow()};" \
+    "     del.onclick=()=>{const ce=E();ce.vars=ce.vars.filter(x=>x.id!==item.id);if(!ce.vars.length)ce.disabled=false;ce.revision++;ce.dirty=true;renderList();updatePresetUI();updateFooter();saveEnvNow()};" \
     "     fields.append(kIn,vIn);row.append(fields,del);lastKeyEl=kIn;valEls.push(vIn);" \
     "     return row;" \
     "    });" \
@@ -334,71 +377,64 @@
     "    valEls.forEach(autoResize);" \
     "    if(focusNewRow&&lastKeyEl){focusNewRow=false;lastKeyEl.focus?.()}" \
     "   }" \
-    "   if(doc.activeElement!==textArea){textArea.value=serializeText(vars,comments);if(mode==='text')autoResize(textArea)}" \
+    "   if(doc.activeElement!==textArea){textArea.value=S.serializeText(e.vars,e.comments);if(mode==='text')autoResize(textArea)}" \
     "   updateFooter();" \
     "  };" \
     "  const applyPreset=k=>{" \
-    "   const p=presets[k];if(!p)return;" \
+    "   const p=presets[k],e=E();if(!p)return;" \
     "   commitArgs(p.args||'');" \
-    "   vars=clone(p.vars||[]).map(v=>({id:nextRow++,key:v.key,val:v.val}));" \
-    "   comments=[];disabled=false;revision++;dirty=true;" \
-    "   if(mode==='text'){textArea.value=serializeText(vars,comments);autoResize(textArea)}" \
+    "   e.vars=clone(p.vars||[]).map(v=>({id:S.allocId(),key:v.key,val:v.val}));" \
+    "   e.comments=[];e.disabled=false;e.revision++;e.dirty=true;" \
+    "   if(mode==='text'){textArea.value=S.serializeText(e.vars,e.comments);autoResize(textArea)}" \
     "   renderList();updatePresetUI();closePopover();saveEnvNow();" \
     "  };" \
     "  const closePopover=()=>{popover.hidden=true;presetForm.hidden=true;addPresetBtn.hidden=false};" \
-    "  const loadEnv=()=>{" \
-    "   const id=appId;loaded=false;dirty=false;updateFooter();" \
-    "   if(typeof globalThis.MSCXRoute!=='function'){loaded=true;vars=[];comments=[];disabled=false;savedRaw='';renderList();updatePresetUI();return}" \
-    "   setStatus('Loading environment variables\\u2026',false,false);" \
-    "   Promise.resolve(queues.get(id)).catch(()=>{}).then(()=>globalThis.MSCXRoute('NotProton.GetGameEnvironment#1',id)).then(txt=>{" \
-    "    if(!live()||id!==appId)return;" \
-    "    savedRaw=txt||'';" \
-    "    const p=parseText(savedRaw);" \
-    "    vars=p.vars.map(v=>({id:nextRow++,key:v.key,val:v.val}));" \
-    "    comments=p.comments;disabled=p.disabled;loaded=true;dirty=false;" \
-    "    setStatus('',false,false);" \
-    "    if(mode==='text'){textArea.value=serializeText(vars,comments);autoResize(textArea)}" \
-    "    renderList();updatePresetUI();" \
-    "   }).catch(()=>{" \
-    "    if(!live()||id!==appId)return;" \
-    "    loaded=false;updateFooter();setStatus('Could not load environment variables.',true,true);" \
-    "   });" \
+    "  const onStoreUpdate=e=>{" \
+    "   if(!live()||e.id!==appId)return;" \
+    "   if(e.loading&&!e.loaded)setStatus('Loading environment variables\\u2026',false,false);" \
+    "   else if(e.error)setStatus(e.error,true,true);" \
+    "   else setStatus('',false,false);" \
+    "   if(!selfEdit&&doc.activeElement?.className!=='NPLOEnvKey'&&doc.activeElement?.className!=='NPLOEnvVal'){" \
+    "    renderList();" \
+    "   }else{updateFooter()}" \
+    "   updatePresetUI();" \
     "  };" \
+    "  const bindApp=()=>{unsub?.();unsub=S.subscribe(appId,onStoreUpdate);const e=S.ensure(appId);if(e.loaded)onStoreUpdate(e);else if(e.loading)setStatus('Loading environment variables\\u2026',false,false);else if(e.error)setStatus(e.error,true,true);renderList();updatePresetUI()};" \
     "  presetBtn.onclick=ev=>{ev.stopPropagation();const show=popover.hidden;if(show){updatePresetUI();popover.hidden=false}else closePopover()};" \
     "  addPresetBtn.onclick=ev=>{ev.stopPropagation();addPresetBtn.hidden=true;presetForm.hidden=false;presetInput.value='';presetInput.focus?.()};" \
     "  presetInput.onclick=ev=>ev.stopPropagation();" \
     "  const confirmPreset=ev=>{ev?.stopPropagation();" \
-    "   const name=presetInput.value.trim();if(!name){presetInput.focus?.();return}" \
-    "   if(mode==='text'){const p=parseText(textArea.value);vars=p.vars.map(v=>({id:nextRow++,key:v.key,val:v.val}));comments=p.comments}" \
+    "   const name=presetInput.value.trim(),e=E();if(!name){presetInput.focus?.();return}" \
+    "   if(mode==='text'){const p=S.parseText(textArea.value);e.vars=p.vars.map(v=>({id:S.allocId(),key:v.key,val:v.val}));e.comments=p.comments}" \
     "   let key='custom_'+Date.now();while(presets[key])key+='_1';" \
-    "   presets[key]={label:name,args:argsInput.value,vars:activeVars(vars)};" \
+    "   presets[key]={label:name,args:argsInput.value,vars:S.activeVars(e.vars)};" \
     "   savePresets(presets);updatePresetUI();closePopover();" \
     "  };" \
     "  presetSaveBtn.onclick=confirmPreset;" \
     "  presetInput.onkeydown=ev=>{if(ev.key==='Enter')confirmPreset(ev);else if(ev.key==='Escape')closePopover()};" \
     "  argsInput.oninput=()=>{autoResize(argsInput);echo.push(argsInput.value);cur.setValue?.(argsInput.value);updatePresetUI();updateFooter()};" \
-    "  addVarBtn.onclick=()=>{if(!loaded)return;vars.push({id:nextRow++,key:'',val:''});focusNewRow=true;renderList();updatePresetUI()};" \
+    "  addVarBtn.onclick=()=>{const e=E();if(!e.loaded)return;e.vars.push({id:S.allocId(),key:'',val:''});focusNewRow=true;renderList();updatePresetUI()};" \
     "  modeBtn.onclick=()=>{" \
-    "   if(!loaded)return;" \
+    "   const e=E();if(!e.loaded)return;" \
     "   if(mode==='list'){" \
-    "    mode='text';textArea.value=serializeText(vars,comments);updateFooter();autoResize(textArea);textArea.focus?.();" \
+    "    mode='text';textArea.value=S.serializeText(e.vars,e.comments);updateFooter();autoResize(textArea);textArea.focus?.();" \
     "   }else{" \
-    "    const p=parseText(textArea.value);" \
-    "    vars=p.vars.map(v=>({id:nextRow++,key:v.key,val:v.val}));comments=p.comments;" \
+    "    const p=S.parseText(textArea.value);" \
+    "    e.vars=p.vars.map(v=>({id:S.allocId(),key:v.key,val:v.val}));e.comments=p.comments;" \
     "    mode='list';renderList();updatePresetUI();saveEnvNow();" \
     "   }" \
     "  };" \
     "  textArea.oninput=()=>{" \
-    "   autoResize(textArea);" \
-    "   if(parseLinesValid(textArea.value)){const p=parseText(textArea.value);vars=p.vars.map(v=>({id:nextRow++,key:v.key,val:v.val}));comments=p.comments;updatePresetUI();updateFooter()}" \
+    "   const e=E();autoResize(textArea);" \
+    "   if(S.parseLinesValid(textArea.value)){const p=S.parseText(textArea.value);e.vars=p.vars.map(v=>({id:S.allocId(),key:v.key,val:v.val}));e.comments=p.comments;updatePresetUI();updateFooter()}" \
     "   scheduleSave();" \
     "  };" \
     "  textArea.onblur=()=>saveEnvNow();" \
-    "  bypassBtn.onclick=()=>{if(!loaded||!vars.length)return;disabled=!disabled;revision++;dirty=true;updatePresetUI();updateFooter();saveEnvNow()};" \
+    "  bypassBtn.onclick=()=>{const e=E();if(!e.loaded||!e.vars.length)return;e.disabled=!e.disabled;e.revision++;e.dirty=true;updatePresetUI();updateFooter();saveEnvNow()};" \
     "  clearBtn.onclick=()=>{" \
-    "   if(!loaded)return;" \
-    "   undoSnap={args:argsInput.value,vars:clone(vars),comments:clone(comments),disabled};" \
-    "   commitArgs('');vars=[];comments=[];disabled=false;revision++;dirty=true;" \
+    "   const e=E();if(!e.loaded)return;" \
+    "   undoSnap={args:argsInput.value,vars:clone(e.vars),comments:clone(e.comments),disabled:e.disabled};" \
+    "   commitArgs('');e.vars=[];e.comments=[];e.disabled=false;e.revision++;e.dirty=true;" \
     "   textArea.value='';if(mode==='text')autoResize(textArea);" \
     "   renderList();updatePresetUI();saveEnvNow();" \
     "   undoBtn.hidden=false;if(undoTimer)clearTimeout(undoTimer);" \
@@ -406,27 +442,27 @@
     "  };" \
     "  undoBtn.onclick=()=>{" \
     "   if(!undoSnap)return;" \
-    "   const s=undoSnap;undoSnap=null;if(undoTimer){clearTimeout(undoTimer);undoTimer=null}undoBtn.hidden=true;" \
-    "   commitArgs(s.args);vars=s.vars;comments=s.comments;disabled=s.disabled;revision++;dirty=true;" \
-    "   if(mode==='text'){textArea.value=serializeText(vars,comments);autoResize(textArea)}" \
+    "   const e=E(),s=undoSnap;undoSnap=null;if(undoTimer){clearTimeout(undoTimer);undoTimer=null}undoBtn.hidden=true;" \
+    "   commitArgs(s.args);e.vars=s.vars;e.comments=s.comments;e.disabled=s.disabled;e.revision++;e.dirty=true;" \
+    "   if(mode==='text'){textArea.value=S.serializeText(e.vars,e.comments);autoResize(textArea)}" \
     "   renderList();updatePresetUI();saveEnvNow();" \
     "  };" \
-    "  retryBtn.onclick=()=>{if(!loaded)loadEnv();else saveEnvNow()};" \
+    "  retryBtn.onclick=()=>{const e=E();if(!e.loaded)S.load(appId);else saveEnvNow()};" \
     "  const onDocClick=ev=>{if(!presetWrap.contains?.(ev.target))closePopover()};" \
     "  doc.addEventListener?.('click',onDocClick);" \
     "  const ro=typeof ResizeObserver==='function'?new ResizeObserver(()=>{autoResize(argsInput);if(mode==='text')autoResize(textArea);else valEls.forEach(autoResize)}):null;" \
     "  ro?.observe(root);" \
     "  const obs=globalThis.MutationObserver?new globalThis.MutationObserver(()=>{if(!root.isConnected){" \
-    "   if(dirty)saveEnvNow();stopped=true;if(undoTimer)clearTimeout(undoTimer);if(saveTimer)clearTimeout(saveTimer);" \
+    "   if(E().dirty)saveEnvNow();stopped=true;unsub?.();if(undoTimer)clearTimeout(undoTimer);if(saveTimer)clearTimeout(saveTimer);" \
     "   doc.removeEventListener?.('click',onDocClick);ro?.disconnect();obs.disconnect()" \
     "  }}):null;" \
     "  obs?.observe(doc,{childList:true,subtree:true});" \
     "  root.npLO={sync(np){" \
     "   cur=np;title.textContent=np.title||'Launch Options';" \
-    "   if(np.appId!==appId){appId=np.appId;lastPropVal=np.value||'';echo.length=0;vars=[];comments=[];disabled=false;savedRaw='';undoSnap=null;undoBtn.hidden=true;argsInput.value=lastPropVal;autoResize(argsInput);renderList();loadEnv();return}" \
+    "   if(np.appId!==appId){appId=np.appId;lastPropVal=np.value||'';echo.length=0;undoSnap=null;undoBtn.hidden=true;argsInput.value=lastPropVal;autoResize(argsInput);bindApp();return}" \
     "   syncArgsFromProps(np.value);updatePresetUI();updateFooter();" \
     "  }};" \
-    "  argsInput.value=props.value||'';autoResize(argsInput);updatePresetUI();loadEnv();" \
+    "  argsInput.value=props.value||'';autoResize(argsInput);bindApp();" \
     " };" \
     " return np=>react().jsxs('div',{className:'NPLOSection'+(np.className?' '+np.className:''),children:[" \
     "  react().jsx('style',{children:\"" NP_LO_CSS "\"})," \

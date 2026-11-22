@@ -6,7 +6,7 @@ import subprocess
 import tempfile
 
 source = Path('dylib/feats/compat_run.sh').read_text()
-reader = source[source.index('np_game_env_text=""'):source.index('np_from_defaults() {')]
+reader = source[source.index('np_game_env_text=""'):source.index('CX_ROOT="$np_support')]
 collect = source[source.index('# Forward custom names'):source.index('# Anything this script does not know by name')]
 start = source.index('  while IFS= read -r np_game_env_line; do', source.index('game_cwd=\"$(pwd)\"'))
 # First loop is the copied-runner path; the second emits open --env arguments.
@@ -18,17 +18,17 @@ with tempfile.TemporaryDirectory(prefix='notproton-env-') as root:
     text = (f'# comment\r\n\r\n FOO =old\r\nFOO=two words=ok\nEMPTY=\n'
             f'LITERAL=$(touch {marker}); `touch {marker}` $HOME "quoted"\n'
             'UNICODE=Türkçe 日本語\nname=game-name\nlog=game-log\n'
-            'WINEMSYNC=1\nWINEDEBUG=-all\nDXMT_CONFIG=a=b\n'
+            'WINEMSYNC=1\nWINEDEBUG=-all\nDXMT_CONFIG=a=b\nNOTPROTON_TRUEHDR=1\n'
             'PATH=/bad\nWINEPREFIX=/bad\nNOTPROTON_GAME_CWD=/bad\nBAD-NAME=no\n'
             'LAST=no-newline')
     (path / 'notproton.env').write_text(text)
     script = reader + '\nnp_game_env_pairs=""\n' + collect + '\nset -- game.exe "argument with spaces"\n' + forward + '''
-    printf '%s\\0' "$WINEMSYNC" "$WINEDEBUG" "$DXMT_CONFIG" "$log" "$@"
+    printf '%s\\0' "$WINEMSYNC" "$WINEDEBUG" "$DXMT_CONFIG" "$NOTPROTON_TRUEHDR" "${NOTPROTON_GAME_CWD-}" "$log" "$@"
     '''
     env = dict(os.environ, STEAM_COMPAT_DATA_PATH=root, verb='waitforexitandrun', log='launcher-log')
     result = subprocess.check_output(['sh', '-ec', script], env=env).decode().split('\0')[:-1]
-    assert result[:4] == ['1', '-all', 'a=b', 'launcher-log'], result
-    args = result[4:]
+    assert result[:6] == ['1', '-all', 'a=b', '1', '', 'launcher-log'], result
+    args = result[6:]
     assert args[-2:] == ['game.exe', 'argument with spaces'], args
     pairs = args[:-2]
     assert pairs[::2] == ['--env'] * (len(pairs) // 2)
