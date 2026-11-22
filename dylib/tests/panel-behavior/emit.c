@@ -90,7 +90,11 @@ int main(int argc, char **argv) {
         fputs(NP_LIBRARY_WINDOWS_SUMMARY, stdout);
         return 0;
     }
-    fputs("usage: emit component|statement[-data] [fallback [fex-tool...]]|migration|compat-hint|"
+    if (argc == 2 && strcmp(argv[1], "launch-options") == 0) {
+        fputs(NP_CX_LAUNCH_OPTIONS("R0", "B0"), stdout);
+        return 0;
+    }
+    fputs("usage: emit component|statement[-data] [fallback [fex-tool...]]|launch-options|migration|compat-hint|"
           "image-files-label|library-windows-hint|library-windows-summary|prefix-row|barrel-names\n",
           stderr);
     return 2;

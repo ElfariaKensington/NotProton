@@ -48,8 +48,11 @@ with tempfile.TemporaryDirectory(prefix='notproton-env-') as root:
     env['verb'] = 'runinprefix'
     out = subprocess.check_output(['sh', '-ec', reader + 'printf %s "$np_game_env_text"'], env=env)
     assert out == b'', 'Helper launches do not import per-game settings'
-    (path / 'notproton.env').unlink()
+    (path / 'notproton.env').write_text('# notproton-disabled\n# FOO=disabled\n# WINEMSYNC=1\n')
     env['verb'] = 'waitforexitandrun'
+    out = subprocess.check_output(['sh', '-ec', reader + 'printf %s "$np_game_env_text"'], env=env)
+    assert out == b'', 'Disabled environment file produces no variables'
+    (path / 'notproton.env').unlink()
     out = subprocess.check_output(['sh', '-ec', reader + 'printf %s "$np_game_env_text"'], env=env)
     assert out == b'', 'No file means no custom environment'
 print('==> gameenv: literal values, duplicates, Unicode, empty values, argv and helper isolation pass')

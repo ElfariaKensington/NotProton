@@ -8,7 +8,7 @@
 const fs = require('fs');
 const { execFileSync } = require('child_process');
 
-const expand = (s, caps) => s.replace(/[\u0001-\u0008\u0013-\u0016]/g, c => {
+const expand = (s, caps) => s.replace(/[\u0001-\u0008\u000e-\u0010\u0013-\u0016]/g, c => {
   if (!(c in caps)) throw new Error('payload uses unbound capture ' + c.charCodeAt(0));
   return caps[c];
 });
@@ -108,4 +108,11 @@ function runner(name) {
   };
 }
 
-module.exports = { panel, walk, details, runner, expand, FORMS };
+function launchOptions(emit, globals = { document: { documentElement: { lang: 'en' } } }) {
+  const raw = execFileSync(emit, ['launch-options'], { encoding: 'utf8' }).trim();
+  const barrel = barrelFor(emit);
+  const build = new Function('R0', 'B0', 'globalThis', 'return ' + raw + ';');
+  return build(react, barrel, globals);
+}
+
+module.exports = { panel, launchOptions, walk, details, runner, expand, FORMS };

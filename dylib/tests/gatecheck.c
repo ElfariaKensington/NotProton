@@ -679,6 +679,52 @@ static void check_older_filter(const char *out_path) {
     free(out);
 }
 
+static void check_launch_options_gates(void) {
+    static const char sample[] =
+        "#AppProperties_Compat_SelectTool\n"
+        "(0,y.CI)()&&Z.push({title:(0,d.we)(\"#AppProperties_CompatibilityPage\")"
+        " (0,y.CI)()&&Z.push({title:(0,d.we)(\"#AppProperties_CompatibilityPage\")\n"
+        "Compatibility:{visible:k&&(0,y.CI)(),title:\n"
+        "function x(g){return(0,e.jsxs)(a.XY,{label:(0,i.we)(\"#Settings_SteamPlay_SteamPlay\"),"
+        "children:[(0,e.jsx)(P,{details:g.details}),(0,e.jsx)(c.G,{setting:\"compat_show_all_tools\","
+        "label:(0,i.we)(\"#Settings_SteamPlay_ShowAll\"),feature:o.OK})]})}\n"
+        "get is_invalid_os_type(){return this.most_available_per_client_data.is_invalid_os_type}\n"
+        "a.is_invalid_os_type&&(0,e.jsx)(U,{})\n"
+        "(0,h.we)(\"#GameList_Entry_Invalid_OSType2\")\n"
+        "function Le(Sr){const{details:Vr}=Sr,si=a.useId(),ki=a.useId();return(0,e.jsxs)(o.XY,"
+        "{label:(0,c.we)(\"#AppProperties_LaunchOptionsSection\"),children:[(0,e.jsx)(gr,{details:Vr}),"
+        "(0,e.jsx)(\"div\",{id:ki,className:(0,u.A)(ae().Detail),children:(0,c.we)"
+        "(\"#AppProperties_LaunchOptionsDescription\")}),(0,e.jsx)(Ui,{\"aria-labelledby\":si,"
+        "\"aria-describedby\":ki,spellCheck:!1,value:Vr.strLaunchOptions,"
+        "setValue:nn=>SteamClient.Apps.SetAppLaunchOptions(Vr.unAppID,nn)})]})}\n"
+        "(0,e.jsx)(Ui,{className:ae().SectionTopLine,spellCheck:!1,value:nn.strLaunchOptions,"
+        "setValue:di=>SteamClient.Apps.SetShortcutLaunchOptions(Vr,di),"
+        "title:(0,c.we)(\"#AppProperties_LaunchOptionsSection\")})\n";
+    int saved = np_log_level;
+    np_log_level = -1;
+    size_t out_len = 0;
+    const char *shape = NULL;
+    char *out = np_webpatch_transform((const uint8_t *)sample, sizeof(sample) - 1, &out_len, &shape);
+    np_log_level = saved;
+    if (!out || !shape || strcmp(shape, NP_SHAPE_SELECTTOOL) != 0) {
+        wrong("launch options gate sample failed to transform");
+        free(out);
+        return;
+    }
+    if (!strstr(out, "var MSCXLaunchOptions=") ||
+        !strstr(out, "SteamClient.Apps.SetAppLaunchOptions(Vr.unAppID,nn)") ||
+        !strstr(out, "SteamClient.Apps.SetShortcutLaunchOptions(Vr,di)") ||
+        strstr(out, "#AppProperties_LaunchOptionsDescription")) {
+        wrong("launch options gates did not replace regular and shortcut sections");
+    }
+    size_t again_len = 0;
+    np_log_level = -1;
+    char *again = np_webpatch_transform((const uint8_t *)out, out_len, &again_len, NULL);
+    np_log_level = saved;
+    if (again) { wrong("launch options patched sample matched a second time"); free(again); }
+    free(out);
+}
+
 int main(int argc, char **argv) {
     // Tests should not read a user's plugins
     unsetenv("HOME");
@@ -697,7 +743,7 @@ int main(int argc, char **argv) {
     }
 
     if (argc < 2) {
-        selfcheck(); check_captures(); check_fallback(); check_fex_tools(); check_defaults(); check_barrel();
+        selfcheck(); check_captures(); check_fallback(); check_fex_tools(); check_defaults(); check_barrel(); check_launch_options_gates();
         return g_wrong;
     }
 
