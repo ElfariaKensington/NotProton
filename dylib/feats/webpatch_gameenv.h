@@ -4,6 +4,7 @@
 
 #define NP_LO_CSS \
     ".NPLOSection{margin-bottom:14px}" \
+    ".NPLOExtra:not(:empty){margin-bottom:18px}" \
     ".NPLOHeader{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:8px}" \
     ".NPLOTitle{color:#fff;font-size:14.5px;font-weight:600;line-height:1.3;margin:0}" \
     ".NPLOPresetWrap{position:relative;flex-shrink:0}" \
@@ -466,7 +467,7 @@
     " };" \
     " return np=>react().jsxs('div',{className:'NPLOSection'+(np.className?' '+np.className:''),children:[" \
     "  react().jsx('style',{children:\"" NP_LO_CSS "\"})," \
-    "  np.extra||null," \
+    "  np.extra?react().jsx('div',{className:'NPLOExtra',children:np.extra}):null," \
     "  react().jsx('div',{className:'NPLOHost',ref:e=>e&&attach(e,np)},'lo-'+np.appId)" \
     " ]});" \
     "})(()=>" RT ",()=>" BARREL ")"
