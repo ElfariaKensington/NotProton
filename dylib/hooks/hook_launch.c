@@ -14,6 +14,8 @@
 
 typedef int (*fn_parse_shell)(const char *cmd, void *argv, int max, const char **rest);
 
+extern int DobbyHook(void *address, void *replace_call, void **origin_call);
+
 static fn_parse_shell orig_parse_shell;
 static int            np_shell_wrapped;
 
@@ -159,12 +161,23 @@ void np_hooks_launch_install(const struct mach_header_64 *mh, intptr_t slide) {
 
     int rebound = np_rebind_import(mh, slide, "_" NP_PARSE_SYM_POSIX,
                                    (void *)np_hook_parse_shell);
-    np_shell_wrapped = rebound > 0;
-    if (rebound > 0)
+    if (rebound > 0) {
+        np_shell_wrapped = 1;
         NP_LOG("[launch] V_ParseShellCommandLinePOSIX: %d import slot(s) rebound", rebound);
-    else
-        NP_WARN("[launch] V_ParseShellCommandLinePOSIX: no import slot in steamclient "
-                "(rc=%d), launches keep running without a shell", rebound);
+    } else {
+        int dobby_rc = DobbyHook((void *)orig_parse_shell,
+                                 (void *)np_hook_parse_shell,
+                                 (void **)&orig_parse_shell);
+        if (dobby_rc == 0) {
+            np_shell_wrapped = 1;
+            NP_LOG("[launch] V_ParseShellCommandLinePOSIX: directly hooked after import rebind rc=%d",
+                   rebound);
+        } else {
+            np_shell_wrapped = 0;
+            NP_WARN("[launch] V_ParseShellCommandLinePOSIX: no import slot (rc=%d) and direct hook failed (rc=%d); launches keep running without a shell",
+                    rebound, dobby_rc);
+        }
+    }
 
     // Steam frees this string itself, so it has to be grown with Steam's allocator as a
     // plain realloc would crash.

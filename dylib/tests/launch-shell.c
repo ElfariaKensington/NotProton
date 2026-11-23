@@ -6,6 +6,12 @@ int   np_log_level = 0;
 FILE *np_log_file  = NULL;
 
 static int rebind_rc = -1;
+static int dobby_rc  = -1;
+
+int DobbyHook(void *address, void *replace_call, void **origin_call) {
+    (void)address; (void)replace_call; (void)origin_call;
+    return dobby_rc;
+}
 
 int np_rebind_import(const struct mach_header_64 *mh, intptr_t slide,
                      const char *symbol, void *replacement) {
@@ -219,22 +225,37 @@ int main(void) {
     keeps("--cwd client_pc\\root\\bin\\pc", "--cwd client_pc\\root\\bin\\pc", NULL);
     np_shell_wrapped = 1;
 
-    printf("== the shell is used only when an import slot was rebound ==\n");
+    printf("== the shell is used when an import slot was rebound or DobbyHook succeeds ==\n");
     int rcs[] = { -1, 0, 1, 2 };
+    dobby_rc = -1;
     for (size_t i = 0; i < sizeof(rcs) / sizeof(rcs[0]); i++) {
         rebind_rc        = rcs[i];
         np_shell_wrapped = -1;
         np_hooks_launch_install(NULL, 0);
         if (np_shell_wrapped != (rcs[i] > 0)
             || np_hooks_launch_count() != (rcs[i] > 0 ? 1 : 0)) {
-            printf("FAIL rebind rc=%d left np_shell_wrapped=%d, %d hook(s)\n",
+            printf("FAIL rebind rc=%d dobby=%d left np_shell_wrapped=%d, %d hook(s)\n",
+                   rcs[i], dobby_rc, np_shell_wrapped, np_hooks_launch_count());
+            failures++;
+        } else {
+            printf("  ok    rebind rc=%d, dobby=%d, wrapped=%d, %d hook(s)\n",
+                   rcs[i], dobby_rc, np_shell_wrapped, np_hooks_launch_count());
+        }
+    }
+    dobby_rc = 0;
+    for (size_t i = 0; i < 2; i++) {
+        rebind_rc        = rcs[i];
+        np_shell_wrapped = -1;
+        np_hooks_launch_install(NULL, 0);
+        if (np_shell_wrapped != 1 || np_hooks_launch_count() != 1) {
+            printf("FAIL rebind rc=%d dobby=0 fallback left np_shell_wrapped=%d, %d hook(s)\n",
                    rcs[i], np_shell_wrapped, np_hooks_launch_count());
             failures++;
         } else {
-            printf("  ok    rebind rc=%d, wrapped=%d, %d hook(s)\n",
-                   rcs[i], np_shell_wrapped, np_hooks_launch_count());
+            printf("  ok    rebind rc=%d, dobby=0 fallback, wrapped=1, 1 hook\n", rcs[i]);
         }
     }
+    dobby_rc = -1;
 
     printf("== NOTPROTON_DISABLE=launch turns off the shell and the backslash hook ==\n");
     rebind_rc        = 1;
