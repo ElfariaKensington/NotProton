@@ -14,6 +14,9 @@
 #include "input.h"
 
 static NSSize pixels;
+// No size chosen: follow the game window's own size instead of imposing one.
+static BOOL autoSize;
+static atomic_bool exclusiveMode;
 static Class wineClass;
 static char stateKey;
 static char frontedKey;
@@ -33,11 +36,10 @@ static CGFloat cursorScale;
 static void updateCursorMapping(NSWindow *w);
 static NSApplicationPresentationOptions savedChrome;
 static BOOL changedPresentation;
-static atomic_bool exclusiveMode;
-static BOOL fullscreenFromWindowStyle;
 static void scheduleEntry(NSWindow *w);
 static void fitWindow(NSWindow *w);
 static void promoteGameProcess(void);
+static void solidTitlebar(NSWindow *w);
 
 
 static const NSApplicationPresentationOptions hiddenChrome = NSApplicationPresentationHideDock |
@@ -84,9 +86,31 @@ static NPGameWindowState *state(NSWindow *w) {
     return objc_getAssociatedObject(w, &stateKey);
 }
 
+// Inside a native fullscreen Space macOS honours HideMenuBar but ignores HideDock, so a
+// bottom-edge hit still slides the Dock in over the game. Wine keeps an active fullscreen
+// window above the Dock and the menu bar (NSStatusWindowLevel + 1); do the same while the
+// game is the key window of its own Space, and return to normal level as soon as another
+// window, app or Space takes over or the Space transition starts.
+static NSInteger gameLevel(NSWindow *w) {
+    NPGameWindowState *s = state(w);
+    NSWindow *key = NSApp.keyWindow;
+    if (!s || s.closed || s.transitioning || !(w.styleMask & NSWindowStyleMaskFullScreen) || !NSApp.active ||
+        !w.visible || w.miniaturized || !w.onActiveSpace || (key && key != w)) return NSNormalWindowLevel;
+    return NSStatusWindowLevel + 1;
+}
+
+static void syncLevel(NSWindow *w) {
+    if (!state(w)) return;
+    NSInteger level = gameLevel(w);
+    if (w.level == level) return;
+    fprintf(stderr, "[native-space] window level %ld\n", (long)level);
+    w.level = level;
+}
+
 static void syncPresentation(void) {
     NSWindow *w = managedWindow;
     NPGameWindowState *s = state(w);
+    syncLevel(w);
     BOOL native = (w.styleMask & NSWindowStyleMaskFullScreen) != 0;
     NSScreen *screen = w.screen;
     BOOL borderless = w.keyWindow && !s.decorated && screen && NSContainsRect(w.frame, screen.frame);
@@ -119,9 +143,10 @@ static void syncPresentation(void) {
 }
 
 static BOOL wantsFullscreen(NPGameWindowState *s) {
-    // These games can show an undecorated fullscreen window without a
-    // successful exclusive display-mode change.
-    return fullscreenFromWindowStyle ? !s.decorated : atomic_load(&exclusiveMode);
+    // A game that runs borderless or switches the display to fullscreen gets its own
+    // native Space. A window with a title bar is the player's windowed choice and
+    // stays on the desktop; the window's fullscreen control still moves it.
+    return !s.decorated || atomic_load(&exclusiveMode);
 }
 
 static NSSize logicalSize(NPGameWindowState *s) {
@@ -154,7 +179,7 @@ static void configure(NSWindow *w) {
         w.contentMinSize = NSMakeSize(160, 100);
         w.contentMaxSize = NSMakeSize(CGFLOAT_MAX, CGFLOAT_MAX);
         w.contentAspectRatio = pixels;
-        w.level = NSNormalWindowLevel;
+        w.level = gameLevel(w);
         w.hidesOnDeactivate = NO;
         BOOL movable = !(style & NSWindowStyleMaskFullScreen);
         if (w.movable != movable) w.movable = movable;
@@ -171,6 +196,7 @@ static void configure(NSWindow *w) {
                     NSWindowCollectionBehaviorParticipatesInCycle |
                     NSWindowCollectionBehaviorFullScreenPrimary;
         if (w.collectionBehavior != behavior) w.collectionBehavior = behavior;
+        solidTitlebar(w);
     }
     NSSize logical = logicalSize(s);
     if (!NSEqualSizes(w.contentView.bounds.size, logical)) w.contentView.boundsSize = logical;
@@ -209,16 +235,39 @@ static void postFrame(NSWindow *w, SEL cmd, NSRect frame, BOOL fullscreen, BOOL 
 // Launcher and driver-warning dialogs are Wine windows too, and must never be stretched to the
 // game size. The game's own window either renders through a Metal/GL surface or already has the
 // requested size.
+static BOOL hasRenderLayer(CALayer *layer, int depth) {
+    if (!layer || depth > 6) return NO;
+    NSString *name = NSStringFromClass(layer.class);
+    // Direct3D 9 titles (e.g. Sonic Adventure 2) present through an OpenGL-backed layer.
+    if ([layer isKindOfClass:CAMetalLayer.class] || [name containsString:@"Metal"] || [name containsString:@"OpenGL"])
+        return YES;
+    for (CALayer *child in layer.sublayers)
+        if (hasRenderLayer(child, depth + 1)) return YES;
+    return NO;
+}
+
+// Translation layers nest their drawable at different depths, so search the
+// whole layer tree, not only the view's own layer and its direct sublayers.
 static BOOL hasRenderSurface(NSView *view, int depth) {
     if (depth > 8) return NO;
     NSString *name = NSStringFromClass(view.class);
-    if ([view.layer isKindOfClass:CAMetalLayer.class] || [name containsString:@"Metal"] ||
-        [name containsString:@"OpenGL"]) return YES;
-    for (CALayer *layer in view.layer.sublayers)
-        if ([layer isKindOfClass:CAMetalLayer.class]) return YES;
+    if ([name containsString:@"Metal"] || [name containsString:@"OpenGL"] || hasRenderLayer(view.layer, 0))
+        return YES;
     for (NSView *child in view.subviews)
         if (hasRenderSurface(child, depth + 1)) return YES;
     return NO;
+}
+
+// Wine gives its windows a clear background so layered windows can show what is
+// behind them. On a titled window that leaves the title bar see-through, showing
+// the desktop under the title. Give titled windows the standard window background.
+static void solidTitlebar(NSWindow *w) {
+    if (![w isKindOfClass:wineClass] || !(w.styleMask & NSWindowStyleMaskTitled) ||
+        (w.styleMask & NSWindowStyleMaskFullScreen)) return;
+    if (w.titlebarAppearsTransparent) w.titlebarAppearsTransparent = NO;
+    NSColor *rgb = [w.backgroundColor colorUsingColorSpace:NSColorSpace.sRGBColorSpace];
+    if (rgb && rgb.alphaComponent >= 1) return;
+    w.backgroundColor = NSColor.windowBackgroundColor;
 }
 
 // Games such as Unreal titles keep a titled 2-pixel-high guard window around. Windows draws
@@ -239,10 +288,17 @@ static BOOL looksLikeGame(NSWindow *w) {
 static void attach(NSWindow *w) {
     if (state(w).closed) objc_setAssociatedObject(w, &stateKey, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     if (state(w) || (managedWindow && managedWindow != w) || !eligible(w) || !looksLikeGame(w)) return;
+    // Wine uses a fixed 2x Retina mode independently of the screen's current scale.
+    CGFloat scale = w.contentView.layer.mask.contentsScale >= 2 ? 2 : 1;
+    if (autoSize) {
+        NSSize content = [w contentRectForFrameRect:w.frame].size;
+        NSSize size = NSMakeSize(round(content.width * scale), round(content.height * scale));
+        if (size.width < 320 || size.height < 200) return;
+        pixels = size;
+    }
     NPGameWindowState *s = [NPGameWindowState new];
     s.attachedAt = NSProcessInfo.processInfo.systemUptime;
-    // Wine uses a fixed 2x Retina mode independently of the screen's current scale.
-    s.scale = w.contentView.layer.mask.contentsScale >= 2 ? 2 : 1;
+    s.scale = scale;
     s.decorated = (w.styleMask & NSWindowStyleMaskTitled) != 0;
     s.requestedFullscreen = wantsFullscreen(s) || (w.styleMask & NSWindowStyleMaskFullScreen);
     s.pendingEntry = YES;
@@ -317,13 +373,14 @@ static void activateGameProcess(void) {
 #pragma clang diagnostic pop
 }
 
-// Single-icon launches inject game-client.dylib, which keeps every Wine process an
-// accessory app so only the launcher shows in the Dock. An accessory app never owns
-// the menu bar and cannot hide it, so the app that was in front keeps its menu bar
-// over the game. Make the game process a regular app. game-client overrides
-// -setActivationPolicy: to turn Regular back into Accessory, so transform directly.
+// An accessory Wine process never owns the menu bar and cannot hide it, so the app
+// that was in front keeps its menu bar over the game. Make the game process a
+// regular app. Single-icon sessions (game-client.dylib, NOTPROTON_GAME_CHANNEL) are
+// left alone: their launcher host owns the Dock tile, and a promoted Wine process
+// would add a second, generic "EXE" tile.
 static void promoteGameProcess(void) {
     if (NSApp.activationPolicy == NSApplicationActivationPolicyRegular) return;
+    if (getenv("NOTPROTON_GAME_CHANNEL")) return;
     ProcessSerialNumber process;
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
@@ -331,7 +388,14 @@ static void promoteGameProcess(void) {
     if (status == noErr) status = TransformProcessType(&process, kProcessTransformToForegroundApplication);
 #pragma clang diagnostic pop
     fprintf(stderr, "[native-space] made game process a regular app: status %d\n", (int)status);
-    NSString *icon = [NSBundle.mainBundle pathForResource:@"game" ofType:@"icns"];
+    // CrossOver runs each Windows process from a temporary per-executable link, so
+    // the main bundle is not the game's launcher. WINELOADER lives inside it.
+    NSString *loader = NSProcessInfo.processInfo.environment[@"WINELOADER"];
+    NSString *contents = loader.stringByDeletingLastPathComponent.stringByDeletingLastPathComponent;
+    NSString *icon = [contents.lastPathComponent isEqualToString:@"Contents"] ?
+        [contents stringByAppendingPathComponent:@"Resources/game.icns"] : nil;
+    if (![NSFileManager.defaultManager fileExistsAtPath:icon])
+        icon = [NSBundle.mainBundle pathForResource:@"game" ofType:@"icns"];
     NSImage *image = icon ? [[NSImage alloc] initWithContentsOfFile:icon] : nil;
     if (image) NSApp.applicationIconImage = image;
     // The process may already be in front as an accessory; front it again so it
@@ -414,7 +478,7 @@ void np_game_space_display_mode(bool fullscreen) {
     CFRunLoopPerformBlock(CFRunLoopGetMain(), kCFRunLoopDefaultMode, ^{
         NSWindow *w = managedWindow;
         NPGameWindowState *s = state(w);
-        if (s && !fullscreenFromWindowStyle && s.requestedFullscreen != wantsFullscreen(s)) {
+        if (s && s.requestedFullscreen != wantsFullscreen(s)) {
             s.requestedFullscreen = wantsFullscreen(s);
             s.fitPending = YES;
             s.pendingEntry = YES;
@@ -447,6 +511,7 @@ static BOOL gameSized(NSWindow *w) {
 static void (*originalDraw)(id, SEL);
 static void drawn(NSWindow *w, SEL cmd) {
     originalDraw(w, cmd);
+    solidTitlebar(w);
     frontNewWindow(w);
     if (w.visible && (w.keyWindow || !managedWindow)) {
         attach(w);
@@ -461,7 +526,7 @@ static BOOL preventResize(NSWindow *w, SEL cmd) {
 
 static NSInteger (*originalLevel)(id, SEL, BOOL);
 static NSInteger level(NSWindow *w, SEL cmd, BOOL active) {
-    return state(w) ? NSNormalWindowLevel : originalLevel(w, cmd, active);
+    return state(w) ? gameLevel(w) : originalLevel(w, cmd, active);
 }
 static BOOL (*originalIsFullscreen)(id, SEL);
 static BOOL isFullscreen(NSWindow *w, SEL cmd) {
@@ -515,8 +580,24 @@ static void wineFrame(NSWindow *w, SEL cmd, NSRect rect) {
         updateCursorMapping(w);
     }
     if (s.layout || s.transitioning || s.closed || NSIsEmptyRect(rect)) return;
-    configure(w);
     NSSize desired = logicalSize(s);
+    if (autoSize && !NSEqualSizes(rect.size, desired) &&
+        rect.size.width * s.scale >= 320 && rect.size.height * s.scale >= 200) {
+        // The game changed its own resolution: present the new size instead of reverting it.
+        pixels = NSMakeSize(round(rect.size.width * s.scale), round(rect.size.height * s.scale));
+        fprintf(stderr, "[native-space] game resized to %.0fx%.0f pixels\n", pixels.width, pixels.height);
+        s.wineFrame = rect;
+        s.hasWineFrame = YES;
+        s.lastRejected = NSZeroRect;
+        s.sentSize = NO;
+        s.fitPending = !(w.styleMask & NSWindowStyleMaskFullScreen);
+        configure(w);
+        fitWindow(w);
+        report(w, !!(w.styleMask & NSWindowStyleMaskFullScreen), NO, YES);
+        updateCursorMapping(w);
+        return;
+    }
+    configure(w);
     if (NSEqualSizes(rect.size, desired)) {
         s.lastRejected = NSZeroRect;
     } else if (!NSEqualRects(rect, s.lastRejected)) {
@@ -541,7 +622,7 @@ static void features(NSWindow *w, SEL cmd, const void *p) {
     if (s && s.decorated != decorated) {
         if (decorated && !s.transitioning && !(w.styleMask & NSWindowStyleMaskFullScreen) && !w.zoomed)
             s.windowedFrame = w.frame;
-        s.requestedFullscreen = !s.decorated && wantsFullscreen(s);
+        s.requestedFullscreen = wantsFullscreen(s);
         s.fitPending = YES;
         s.pendingEntry = YES;
         scheduleEntry(w);
@@ -569,6 +650,7 @@ static void style(NSWindow *w, SEL cmd, NSWindowStyleMask mask) {
         mask = w.styleMask;
     }
     originalStyle(w, cmd, mask);
+    solidTitlebar(w);
 }
 static void (*originalToggle)(id, SEL, id);
 static void toggle(NSWindow *w, SEL cmd, id sender) {
@@ -869,6 +951,7 @@ static void install(void) {
         s.transitioning = YES;
         if (!s.modeToggle) s.requestedFullscreen = YES;
         s.modeToggle = NO;
+        syncLevel(n.object);
     });
     observe(nc, NSWindowWillExitFullScreenNotification, ^(NSNotification *n) {
         NPGameWindowState *s = state(n.object);
@@ -876,6 +959,7 @@ static void install(void) {
         if (!s.modeToggle) s.requestedFullscreen = NO;
         s.modeToggle = NO;
         s.fitPending = YES;
+        syncLevel(n.object);
     });
     for (NSString *name in @[NSWindowDidEnterFullScreenNotification, NSWindowDidExitFullScreenNotification])
         observe(nc, name, ^(NSNotification *n) {
@@ -919,6 +1003,8 @@ static void install(void) {
             syncPresentation();
             updateCursorMapping(managedWindow);
             scheduleEntry(managedWindow);
+            // AppKit updates keyWindow and the active state after these are posted.
+            dispatch_async(dispatch_get_main_queue(), ^{ syncLevel(managedWindow); });
         });
     observe(NSWorkspace.sharedWorkspace.notificationCenter, NSWorkspaceActiveSpaceDidChangeNotification,
             ^(NSNotification *n) {
@@ -947,7 +1033,7 @@ static void install(void) {
     // A game's Metal surface can appear after its window was last drawn or resized, with no
     // notification of its own. Re-check until a game window is found.
     [observers addObject:[NSTimer scheduledTimerWithTimeInterval:1 repeats:YES block:^(NSTimer *t) {
-        for (NSWindow *w in NSApp.windows) if (w.visible) { hideSliver(w); frontNewWindow(w); }
+        for (NSWindow *w in NSApp.windows) if (w.visible) { hideSliver(w); solidTitlebar(w); frontNewWindow(w); }
         // Leaving a native Space settles after its notifications, while the window
         // is not yet on the active Space, so a pointer mapping taken then is stale.
         if (managedWindow) { syncPresentation(); updateCursorMapping(managedWindow); return; }
@@ -1016,22 +1102,17 @@ __attribute__((constructor)) static void start(void) {
     if (!value && _NSGetExecutablePath(executable, &capacity) == 0 &&
         np_game_space_manifest(executable, manifest, sizeof(manifest))) value = manifest;
     unsigned width, height;
+    // "auto" (no size chosen) keeps Wine's display modes and the game's own resolution;
+    // the size is taken from the game window once it appears.
+    if (value && !strcmp(value, "auto")) {
+        autoSize = YES;
+        fprintf(stderr, "[native-space] requested auto size in pid %d\n", getpid());
+        _dyld_register_func_for_add_image(imageAdded);
+        return;
+    }
     if (!np_game_space_size(value, &width, &height)) return;
     pixels = NSMakeSize(width, height);
     np_game_space_set_display_size(width, height);
-    const char *appID = getenv("STEAM_COMPAT_APP_ID");
-    BOOL belowZero = appID && !strcmp(appID, "848450");
-    BOOL source = appID && !strcmp(appID, "240");
-    @autoreleasepool {
-        NSString *bundle = NSBundle.mainBundle.bundleIdentifier;
-        belowZero |= [bundle isEqualToString:@"com.notproton.launcher.848450"];
-        source |= [bundle isEqualToString:@"com.notproton.launcher.240"];
-    }
-    // Source also supports explicit borderless windowed launches.
-    char **argv = *_NSGetArgv();
-    for (int i = 1; source && i < *_NSGetArgc(); i++)
-        if (!strcasecmp(argv[i], "-noborder")) source = NO;
-    fullscreenFromWindowStyle = belowZero || source;
     fprintf(stderr, "[native-space] requested %ux%u in pid %d\n", width, height, getpid());
     _dyld_register_func_for_add_image(imageAdded);
 }
